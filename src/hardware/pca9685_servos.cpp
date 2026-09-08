@@ -24,7 +24,21 @@ void initPca9685() {
       "Not found"
     );
 
+#ifdef ALLOW_MISSING_HARDWARE
+    serialLogPrintln(
+      "ALLOW_MISSING_HARDWARE: continuing without servos"
+    );
+
+    // Still init the driver. Adafruit_PWMServoDriver::begin() allocates i2c_dev
+    // before it probes, and every later setPWM() dereferences that pointer.
+    // Skipping begin() leaves it NULL and the first servo write panics with a
+    // load access fault at 0x0c.
+    initServoPwmDriver();
+
+    return;
+#else
     haltWithRgbCode(RGB_CODE_PCA9685);
+#endif
   }
 
   serialLogPrintln("PCA9685 found");
