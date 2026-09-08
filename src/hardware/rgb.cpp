@@ -58,8 +58,9 @@ bool sameColor(uint8_t r1, uint8_t g1, uint8_t b1, uint8_t r2, uint8_t g2, uint8
 }
 
 void writeRgb(uint8_t r, uint8_t g, uint8_t b) {
-  // Waveshare ESP32-C3-Zero onboard WS2812 uses GRB byte order.
-  rgbLedWriteOrdered(RGB_LED_PIN, LED_COLOR_ORDER_GRB, r, g, b);
+  // This C3-Zero unit's WS2812 is RGB-ordered, not GRB (verified 2026-09-07 by
+  // pin/colour sweep: setRgb(64,0,0) rendered as bright green until this changed).
+  rgbLedWriteOrdered(RGB_LED_PIN, LED_COLOR_ORDER_RGB, r, g, b);
   g_currentR = r;
   g_currentG = g;
   g_currentB = b;
