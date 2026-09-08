@@ -108,10 +108,17 @@ void setup() {
       "Init failed"
     );
 
+#ifdef ALLOW_MISSING_HARDWARE
+    serialLogPrintln(
+      "ALLOW_MISSING_HARDWARE: continuing without audio"
+    );
+#else
     haltWithRgbCode(RGB_CODE_I2S);
+#endif
+  } else {
+    serialLogPrintln("I2S OK");
   }
 
-  serialLogPrintln("I2S OK");
   bootShowProgress(4, kBootSteps, "Audio");
 
   initAudioStorage();
