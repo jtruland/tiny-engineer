@@ -41,14 +41,21 @@ Power pads (not GPIO): **5V**, **GND**, **3V3**.
 
 ## PCA9685 channels (not ESP32 GPIO)
 
-| PCA9685 channel | Firmware | Mechanism |
-| --- | --- | --- |
-| 0 | `SERVO_HEAD` | Head pitch — [robot-movement.md](../robot-movement.md) |
-| 1 | `SERVO_NECK` | Neck yaw |
-| 2 | `SERVO_HAND_LEFT` | Left hand |
-| 3 | `SERVO_HAND_RIGHT` | Right hand |
-| 4 | `SERVO_BODY` | Body / torso |
-| 5–15 | unused | available |
+| PCA9685 channel | Firmware constant | Index | Mechanism |
+| --- | --- | --- | --- |
+| 0 | `SERVO_NECK` | 1 | Neck yaw |
+| 1 | `SERVO_HAND_RIGHT` | 3 | Right hand |
+| 2 | `SERVO_BODY` | 4 | Body / torso |
+| 3 | `SERVO_HAND_LEFT` | 2 | Left hand |
+| 4 | `SERVO_HEAD` | 0 | Head pitch — [robot-movement.md](../robot-movement.md) |
+| 5–15 | unused | — | available |
+
+⚠️ **Channel ≠ index.** The `SERVO_*` constants are array indices into
+`SERVO_SPECS`, `g_servos[]` and the saved min/max blob in NVS; the PCA9685
+output is the `channel` field of `SERVO_SPECS`, and it is the only one that
+reaches `pwm.setPWM()`. `POST /test/servo?index=N` takes the **index**, so it
+no longer matches the channel number. Re-plugging a servo means editing
+`channel`, never the constants.
 
 ## Other constants in `pins.h` (not pins)
 
