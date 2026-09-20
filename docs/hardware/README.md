@@ -92,7 +92,7 @@ Full inventory: [components.md](components.md).
 | --- | --- | --- |
 | I2C | GP0/SDA, GP1/SCL (Waveshare OLED **SCL**) | PCA9685 `0x40`, SSD1306 `0x3C` |
 | I2S | GP2/BCLK, GP3/LRC, GP4/DIN | MAX98357A |
-| Servo PWM | *(none on ESP32)* | PCA9685 channels 0–4 @ 50 Hz |
+| Servo PWM | *(none on ESP32)* | PCA9685 channels 0–4 @ 50 Hz (neck 0, right hand 1, body 2, left hand 3, head 4 — see [pinout.md](pinout.md)) |
 | USB | Adafruit 5993 (VBUS/GND + D+/D− → GP19/GP18) | Power, flash, serial CDC |
 
 Details: [interfaces.md](interfaces.md), [pinout.md](pinout.md).
@@ -117,7 +117,7 @@ Details: [power.md](power.md).
 | [interfaces.md](interfaces.md) | I2C / I2S / PWM / USB |
 | [testing.md](testing.md) | Bring-up sequence, failures, what to check |
 
-Existing schematic sketch (not a substitute for the tables here): [`docs/wiring/Tiny Engineer.drawio`](../wiring/Tiny%20Engineer.drawio) / [PNG](../wiring/Tiny%20Engineer.drawio.png).
+Existing schematic sketch (not a substitute for the tables here): [`docs/wiring/Tiny Engineer.drawio`](../wiring/Tiny%20Engineer.drawio) / [PNG](../wiring/Tiny%20Engineer.drawio.png). KiCad PCB sources (when added) live in [`hardware/boards/`](../../hardware/README.md); contribution rules: [`docs/pcb.md`](../pcb.md). Until a board is merged, the wiring tables here remain the electrical source of truth.
 
 ## Source-of-truth order
 

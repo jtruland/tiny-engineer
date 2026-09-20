@@ -19,12 +19,19 @@ struct ServoSpec {
   float max;
 };
 
+// SERVO_* above are ARRAY INDICES, not PCA9685 outputs: they index SERVO_SPECS,
+// g_servos[] and the saved min/max blob in NVS. The physical output is the
+// `channel` field below, which is the only value that reaches pwm.setPWM().
+// Keep the two apart - renumbering the constants desynchronises the table,
+// the runtime servos and the stored calibration, while `channel` is free to
+// be any PCA9685 output 0-15.
 constexpr ServoSpec SERVO_SPECS[SERVO_COUNT] = {
-  {"HEAD",       SERVO_HEAD,       60.0f, 130.0f},
-  {"NECK",       SERVO_NECK,       40.0f, 130.0f},
-  {"HAND_LEFT",  SERVO_HAND_LEFT,  45.0f, 135.0f},
-  {"HAND_RIGHT", SERVO_HAND_RIGHT, 35.0f, 125.0f},
-  {"BODY",       SERVO_BODY,       40.0f, 130.0f},
+  //           channel as wired on this robot
+  {"HEAD",       4, 50.0f, 130.0f},
+  {"NECK",       0, 30.0f, 150.0f},
+  {"HAND_LEFT",  3, 40.0f, 110.0f},
+  {"HAND_RIGHT", 1, 60.0f, 130.0f},
+  {"BODY",       2, 36.0f,  89.0f},
 };
 
 constexpr float servoMid(const ServoSpec& spec) {
