@@ -27,11 +27,11 @@ struct ServoSpec {
 // be any PCA9685 output 0-15.
 constexpr ServoSpec SERVO_SPECS[SERVO_COUNT] = {
   //           channel as wired on this robot
-  {"HEAD",       4, 60.0f, 130.0f},
-  {"NECK",       0, 40.0f, 130.0f},
-  {"HAND_LEFT",  3, 45.0f, 135.0f},
-  {"HAND_RIGHT", 1, 35.0f, 125.0f},
-  {"BODY",       2, 40.0f, 130.0f},
+  {"HEAD",       4, 50.0f, 130.0f},
+  {"NECK",       0, 30.0f, 150.0f},
+  {"HAND_LEFT",  3, 40.0f, 110.0f},
+  {"HAND_RIGHT", 1, 60.0f, 130.0f},
+  {"BODY",       2, 36.0f,  89.0f},
 };
 
 constexpr float servoMid(const ServoSpec& spec) {
