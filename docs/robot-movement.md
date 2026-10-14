@@ -6,8 +6,8 @@ The robot sits in a chair beside a desk. A miniature laptop and a service bell s
 |------:|------------:|-------|--------|----------|----------|----------------|
 | 0 | 4 | **Head** | Face up / down (pitch) | down | up | 50 – 130 |
 | 1 | 0 | **Neck** | Head left / right (yaw) | left | right | 30 – 150 |
-| 2 | 3 | **Left hand** | Hand up / down | down | up | 40 – 110 |
-| 3 | 1 | **Right hand** | Hand up / down (inverted scale) | up | down | 60 – 130 |
+| 2 | 3 | **Left hand** | Hand up / down | down | up | 50 – 100 |
+| 3 | 1 | **Right hand** | Hand up / down (inverted scale) | up | down | 70 – 130 |
 | 4 | 2 | **Body** | Whole torso left / right | right | left | 36 – 89 |
 
 ⚠️ **Index is not the PCA9685 channel** on this build — the harnesses were attached without tracking which output went where, so `SERVO_SPECS[].channel` carries the real mapping. `POST /test/servo?index=N` takes the index.
