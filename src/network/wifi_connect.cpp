@@ -21,6 +21,19 @@ constexpr unsigned long WIFI_UNSEEN_TIMEOUT_MS = 8000;
 constexpr unsigned long WIFI_POLL_MS = 500;
 constexpr unsigned long IPV6_TIMEOUT_MS = 2000;
 constexpr size_t AP_SSID_MAX = 20;
+// A single miss at boot (AP busy, DHCP slow) must not strand the robot in
+// setup AP mode, so saved networks get several rounds first.
+constexpr int WIFI_BOOT_ROUNDS = 3;
+constexpr unsigned long WIFI_BOOT_ROUND_PAUSE_MS = 2000;
+// The core only auto-reconnects for some disconnect reasons; an AP that
+// deauthenticates for inactivity (reason 4) or leaving (3) is never retried.
+// Give the core a moment, then reconnect ourselves with backoff.
+constexpr unsigned long WIFI_RECONNECT_GRACE_MS = 10000;
+constexpr unsigned long WIFI_RECONNECT_BACKOFF_MIN_MS = 15000;
+constexpr unsigned long WIFI_RECONNECT_BACKOFF_MAX_MS = 300000;
+// Setup AP opened only because saved WiFi failed: if nobody joins it, reboot
+// and try the saved networks again.
+constexpr unsigned long WIFI_FALLBACK_AP_RETRY_MS = 5UL * 60UL * 1000UL;
 
 DNSServer dnsServer;
 bool dnsStarted = false;
@@ -32,6 +45,20 @@ char connectError[32] = "";
 
 bool staConnected = false;
 bool provisioning = false;
+
+// Last network that connected, rejoined after a runtime drop.
+char staSsid[33] = "";
+char staPassword[65] = "";
+bool staWatch = false;
+unsigned long staLostMs = 0;
+unsigned long staNextReconnectMs = 0;
+unsigned long staBackoffMs = WIFI_RECONNECT_BACKOFF_MIN_MS;
+unsigned staReconnects = 0;
+// Written from the WiFi event task, read in the loop.
+volatile uint8_t staDisconnectReason = 0;
+bool staEventRegistered = false;
+
+unsigned long fallbackApSinceMs = 0;
 
 void setConnectError(const char* msg) {
   strncpy(connectError, msg, sizeof(connectError) - 1);
@@ -136,6 +163,21 @@ void stopCaptiveDns() {
   dnsStarted = false;
 }
 
+void watchStaDisconnects() {
+  if (staEventRegistered) {
+    return;
+  }
+
+  WiFi.onEvent(
+    [](arduino_event_id_t, arduino_event_info_t info) {
+      const uint8_t reason = info.wifi_sta_disconnected.reason;
+      staDisconnectReason = reason ? reason : WIFI_REASON_UNSPECIFIED;
+    },
+    ARDUINO_EVENT_WIFI_STA_DISCONNECTED
+  );
+  staEventRegistered = true;
+}
+
 bool connectSta(
   const char* ssid,
   const char* password,
@@ -179,6 +221,13 @@ bool connectSta(
   storeIp(WiFi.localIP());
   staConnected = true;
   WiFi.setSleep(false);
+
+  strncpy(staSsid, ssid, sizeof(staSsid) - 1);
+  staSsid[sizeof(staSsid) - 1] = '\0';
+  strncpy(staPassword, password, sizeof(staPassword) - 1);
+  staPassword[sizeof(staPassword) - 1] = '\0';
+  watchStaDisconnects();
+  staWatch = true;
 
   serialLogPrint("WIFI OK  IP=");
   serialLogPrintln(ipText);
@@ -264,6 +313,84 @@ void startProvisioningAp() {
   serialLogPrintln(apIpText);
 }
 
+void reconnectSta(unsigned long now) {
+  staReconnects++;
+  serialLogPrint("WIFI reconnect #");
+  serialLogPrint(staReconnects);
+  serialLogPrint(" to ");
+  serialLogPrintln(staSsid);
+
+  if (staReconnects == 1) {
+    WiFi.reconnect();
+  } else {
+    // A soft disconnect/begin pair can leave the STA stuck; restart the radio.
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_STA);
+    WiFi.setHostname(settingsHostname());
+    WiFi.enableIPv6(true);
+    WiFi.begin(staSsid, staPassword);
+  }
+
+  staNextReconnectMs = now + staBackoffMs;
+  staBackoffMs = std::min(staBackoffMs * 2, WIFI_RECONNECT_BACKOFF_MAX_MS);
+}
+
+void pollStaConnection() {
+  if (!staWatch || provisioning) {
+    return;
+  }
+
+  const unsigned long now = millis();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    if (staLostMs != 0) {
+      storeIp(WiFi.localIP());
+      serialLogPrint("WIFI back  IP=");
+      serialLogPrintln(ipText);
+      MDNS.end();
+      startMdns(settingsHostname());
+    }
+
+    staLostMs = 0;
+    staReconnects = 0;
+    staBackoffMs = WIFI_RECONNECT_BACKOFF_MIN_MS;
+    return;
+  }
+
+  if (staLostMs == 0) {
+    staLostMs = now;
+    staNextReconnectMs = now + WIFI_RECONNECT_GRACE_MS;
+    const uint8_t reason = staDisconnectReason;
+    serialLogPrint("WIFI lost, reason ");
+    serialLogPrintln(reason);
+    return;
+  }
+
+  if (static_cast<long>(now - staNextReconnectMs) >= 0) {
+    reconnectSta(now);
+  }
+}
+
+void pollFallbackAp() {
+  if (fallbackApSinceMs == 0 || !provisioning) {
+    return;
+  }
+
+  const unsigned long now = millis();
+
+  // Someone is on the setup AP: never reboot under them.
+  if (WiFi.softAPgetStationNum() > 0) {
+    fallbackApSinceMs = now;
+    return;
+  }
+
+  if (now - fallbackApSinceMs >= WIFI_FALLBACK_AP_RETRY_MS) {
+    serialLogPrintln("Setup AP idle; rebooting to retry saved WiFi");
+    delay(100);
+    ESP.restart();
+  }
+}
+
 }  // namespace
 
 bool wifiConnected() {
@@ -298,6 +425,9 @@ void pollWifi() {
   if (dnsStarted) {
     dnsServer.processNextRequest();
   }
+
+  pollStaConnection();
+  pollFallbackAp();
 }
 
 void wifiStopProvisioningAp() {
@@ -341,17 +471,29 @@ void runWifiSetup() {
     WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
 
-    if (connectSavedNetworks()) {
-      provisioning = false;
-      delay(500);
-      return;
+    for (int round = 1; round <= WIFI_BOOT_ROUNDS; round++) {
+      if (connectSavedNetworks()) {
+        provisioning = false;
+        delay(500);
+        return;
+      }
+
+      if (round < WIFI_BOOT_ROUNDS) {
+        serialLogPrintln("Saved WiFi failed; restarting radio and retrying");
+        WiFi.disconnect(true);
+        delay(WIFI_BOOT_ROUND_PAUSE_MS);
+        WiFi.mode(WIFI_STA);
+      }
     }
 
     serialLogPrintln("Saved WiFi failed; opening setup AP");
-  } else {
-    serialLogPrintln("No WiFi credentials; opening setup AP");
+    startProvisioningAp();
+    fallbackApSinceMs = millis();
+    delay(500);
+    return;
   }
 
+  serialLogPrintln("No WiFi credentials; opening setup AP");
   startProvisioningAp();
   delay(500);
 }
