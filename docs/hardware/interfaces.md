@@ -11,14 +11,29 @@ Shared bus.
 | SDA | GPIO0 | GP0 → PCA9685 SDA, OLED SDA |
 | SCL | GPIO1 | GP1 → PCA9685 SCL, Waveshare OLED **SCL** |
 
-| Device | Address | Firmware behaviour if missing |
+| Device | Address | Firmware behaviour if missing at boot |
 | --- | --- | --- |
 | PCA9685 | **`0x40`** | Hard fail: hang, 1 red blink (see [blink codes](testing.md#boot-failure-blink-codes)) |
 | SSD1306 OLED | **`0x3C`** | Soft fail: tests continue without display |
 
-Bus start: `Wire.begin(I2C_SDA, I2C_SCL)` with no explicit frequency → Arduino-ESP32 default (typically **100 kHz**). Not set in this repo.
+That table is the boot check. After boot the firmware keeps watching both devices (`src/hardware/i2c_health.cpp`):
 
-PCA9685 **VCC** = **3V3**. OLED **VCC** = **3V3**. Pull-ups: onboard on the Adafruit PCA9685 and typical OLED modules are enough; no external pull-ups required.
+- **Check:** every 500 ms the OLED must answer, and the PCA9685 must answer, be awake on its internal clock with auto-increment on, and still hold its output mode (`MODE2 = 0x04`) and prescale. Two failed checks in a row are a fault. Each chip is tracked separately, so one that stays down does not stop the checks on the other. A healthy PCA9685 check is two register reads: `MODE1` and `MODE2` together, then the prescale.
+- **Failed servo write:** a fault on its own. The first one takes the PCA9685 down at once and switches its outputs off, even inside a blocking move that never reaches the check. So does a boot setup that does not read back correctly.
+- **While down:** writes to the faulted chip are skipped, so failed transfers do not stall audio and HTTP. At a PCA9685 fault the servo outputs are switched off (OE), so a corrupted setup cannot keep driving them. That needs OE driven by the firmware, the default; with `PCA9685_OE_WIRED = false` a fault cannot switch the outputs off ([PCA9685 output enable](#pca9685-output-enable)).
+- **PCA9685 recovery:** if the chip does not answer, restart `Wire` and clock out a device left holding SDA first. A chip that kept its setup only lost a write or a read. A chip that lost its setup lost power or was corrupted: set it up again, and set the OLED up again too afterwards, since both share a supply. Either way, the outputs come back on with every servo channel off, and then every channel is written and read back. The PCA9685 applies channel values at the end of a LOW cycle, so each servo starts on a whole pulse; turning OE on mid-pulse would cut one short. Servos jump to where the firmware thinks they are. Outputs stay disabled unless the setup and every channel read back correctly.
+- **OLED recovery:** send the panel its setup and the last frame, so a static screen survives too. Every transfer is checked, since the SSD1306 driver ignores failed writes and a half-configured panel still answers its address. The current rotation is kept. Never restarts the bus, so an OLED fault alone does not disturb the servos.
+- **Audio:** a recovery runs in steps, one per loop pass, and a pass services at most one chip. Transfers time out after 20 ms (Wire's default is 50 ms), so a pass costs about one timeout at worst, well inside the speaker's DMA buffer of about 65 ms.
+- **Retry:** a failed attempt is retried after 1 s, doubling up to 30 s.
+- **Report:** `[i2c]` lines on the serial log (with SDA / SCL levels and, for a PCA9685 that answered, its registers) and the `i2c` object in [`GET /health`](../api.md#get-health).
+
+The OLED check is an address ACK only. A panel that loses its setup but still answers is not detected by itself; it is set up again whenever the PCA9685 recovers from a lost setup.
+
+The PCA9685 keeps its registers across an ESP32 reset; only its own power cycle clears them. That is why setup writes `MODE2` explicitly instead of trusting the power-on default.
+
+Bus start: the lines are cleared the same way, then `Wire.begin(I2C_SDA, I2C_SCL)` with no explicit frequency → Arduino-ESP32 default (typically **100 kHz**). Not set in this repo.
+
+PCA9685 **VCC** = **3V3**. OLED **VCC** = **3V3**. Pull-ups are on the main control board and on a typical OLED; the Adafruit PCA9685 breakout has its own. No extra pull-ups.
 
 ## I2S
 
@@ -35,13 +50,13 @@ Bring-up configuration in [`src/main.cpp`](../../src/main.cpp):
 | Parameter | Value |
 | --- | --- |
 | Mode | `I2S_MODE_STD` |
-| Sample rate | **44100** (`SAMPLE_RATE`) |
+| Sample rate | **22050** (`SAMPLE_RATE`) |
 | Width | `I2S_DATA_BIT_WIDTH_16BIT` |
 | Slots | `I2S_SLOT_MODE_STEREO` |
 
-Firmware writes identical samples to both stereo slots. MAX98357A is mono; with **GAIN** and **SD** not wired, breakout defaults apply (GAIN floating ≈ 9 dB, SD pulled up ≈ left channel).
+Firmware writes identical samples to both stereo slots. MAX98357A is mono. On the main control board, gain is the solder jumper next to the amplifier ([board README](../../hardware/boards/main-control-board/README.md)). On the advanced breakout, **GAIN** and **SD** stay unwired (GAIN floating ≈ 9 dB, SD pulled up ≈ left channel) — [wiring.md](wiring.md).
 
-Amp **Vin** = USB **5V** (drawing). I2S wires are 3.3 V logic. **SPK+/SPK-** are not on the PNG.
+On the main control board, amp **Vin** is **AUDIO_5V** (net-tied from **SERVO_5V** after the eFuse), not raw USB **+5V** — [power.md](power.md). On the advanced breakout, amp **Vin** is the shared USB **5V** rail — [wiring.md](wiring.md). I2S wires are 3.3 V logic. Speaker connects to **SPK+** / **SPK−** — [main-control-board.md](main-control-board.md).
 
 > [!WARNING]
 > MAX98357A SPK- is not ground.
@@ -57,26 +72,28 @@ Generated by **PCA9685**, not by ESP32 LEDC/MCPWM.
 
 ESP32 GPIO is not wired to servo SIG lines.
 
-### PCA9685 output enable (optional)
+### PCA9685 output enable
 
 | Signal | ESP32 GPIO | Notes |
 | --- | --- | --- |
 | OE | GPIO5 / GP5 | **Active LOW** — outputs enabled. Firmware drives **HIGH** during PCA9685 init, then **LOW** after neutral PWM is written |
 
-Controlled only when `PCA9685_OE_WIRED = true` in [`include/pins.h`](../../include/pins.h). Default `false`: OE pin unused (Adafruit breakout pull-down keeps outputs enabled). Wire GP5 → PCA9685 **OE** and set the flag to block invalid PWM during boot and flash resets.
+Default on (`PCA9685_OE_WIRED = true` in [`include/pins.h`](../../include/pins.h)). Blocks invalid PWM during boot and flash resets. Set `PCA9685_OE_WIRED` to `false` only if OE is hard-tied off-chip (e.g. permanently to GND) so firmware must not drive GP5.
 
 ## USB
 
-Single USB-C on the robot: **Adafruit 5993**.
+Single USB-C on the robot: the **main control board**.
 
-| Net | 5993 | ESP32 |
+| Net | Board USB-C | ESP32 / loads |
 | --- | --- | --- |
-| VBUS | +5V rail | **5V** pad |
+| VBUS | through fuse → **+5V** | ESP32 **5V** pad; eFuse input → **SERVO_5V** (servos + amp) |
 | GND | common GND | **GND** |
 | D− | data | **GPIO18** |
 | D+ | data | **GPIO19** |
 
-One cable for robot power, flash, and serial CDC (`ARDUINO_USB_MODE=1`, `ARDUINO_USB_CDC_ON_BOOT=1`, monitor 115200). Leave the C3-Zero onboard USB-C unused when 5993 data is wired — [power.md](power.md).
+One cable for robot power, flash, and serial CDC (`ARDUINO_USB_MODE=1`, `ARDUINO_USB_CDC_ON_BOOT=1`, monitor 115200). Leave the C3-Zero onboard USB-C unused when the board USB-C supplies power and data — [power.md](power.md).
+
+The advanced path wires the same nets from an Adafruit 5993 — [wiring.md](wiring.md#usb-connector-5993).
 
 C3-Zero has **no** USB–UART bridge. If CDC does not enumerate, hold **BOOT (GPIO9)** then attach USB (Waveshare flashing note).
 
@@ -86,4 +103,4 @@ C3-Zero has **no** USB–UART bridge. If CDC does not enumerate, hold **BOOT (GP
 | --- | --- | --- |
 | UART0 | GPIO21 TX / GPIO20 RX | Silkscreen; console is USB CDC |
 | BLE | antenna | Hardware may be present; **out of scope** — product uses Wi-Fi only |
-| ESP32 onboard USB-C | — | Unused when 5993 supplies power + data |
+| ESP32 onboard USB-C | — | Unused when the board USB-C supplies power + data |

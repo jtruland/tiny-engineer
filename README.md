@@ -4,133 +4,88 @@
 
 ![Tiny Engineer demo](docs/tiny-engineer-preview.gif)
 
-Tiny Engineer is an open-source, 3D-printable desktop robot that physically acts out what an AI coding agent is doing: reading, thinking, coding, finishing tasks. It runs on an ESP32 over Wi-Fi and exposes a simple REST API, so any tool that can make an HTTP request can drive it.
+**[Watch the demo](https://youtu.be/RX_QRxdXMjg)** · [Build your own](#build-your-own) · [Community builds](#community-builds) · [How it works](#how-it-works)
 
-**[Watch the demo](https://youtu.be/RX_QRxdXMjg) · [Build your own](#build-your-own) · [How it works](#how-it-works) · [API](docs/api.md)**
+A small robot on your desk. It moves, changes its face, and rings a bell as your coding AI agent works.
 
-## Why?
+| Your agent… | The robot… |
+| --- | --- |
+| Reads files | Looks around |
+| Writes code | Types |
+| Thinks or waits | Looks up |
+| Finishes the task | Rings the bell |
 
-AI coding agents increasingly spend long stretches working on their own. I wanted to see what mine was doing without staring at the IDE.
+Open source. Print the body, plug the ESP32, servos, OLED, and speaker into the [main control board](docs/hardware/main-control-board.md), flash it, and it joins your Wi-Fi.
 
-So I built a slightly ridiculous desk robot: instead of another spinner or status line, there is a tiny teammate sitting next to me, visibly reading, thinking, and typing while the agent works.
+**Works with** Claude Code · Cursor · Antigravity — via [`npx -y tiny-engineer setup`](docs/integration.md) — or Codex, Windsurf, and any script that can POST ([integration guide](docs/integration.md) · [HTTP API](docs/api.md)), including speech through [`POST /play`](docs/api.md#post-play).
+
+## Build your own
+
+| | |
+| --- | --- |
+| **Parts (electronics + 5× SG90 Servos)** | [shopping list](docs/shopping.md): [main control board](docs/hardware/order-main-control-board.md) plus ESP32, servos, OLED, and speaker |
+| **Also needed** | 3D printer + filament, or [order prints](docs/3d/order-parts.md); M2 screws; **5 V / ≥2 A** USB supply |
+| **Tools** | Plug in the ESP32, servos, OLED, and speaker on the [main control board](docs/hardware/main-control-board.md). Want to add extra modules? [advanced wiring](docs/hardware/wiring.md) |
+| **Difficulty** | **Medium** - fair first hardware project for a software engineer, not a one-LED kit. Optional primer: [From Code to Circuits](docs/hardware-for-software-engineers/README.md) |
+
+[![Main control board](docs/pcb_banner.jpg)](https://github.com/jamro/tiny-engineer/discussions/50)
+
+The default build uses the open-source main control board. Order it from any fab ([how to order](docs/hardware/order-main-control-board.md) · [KiCad](hardware/boards/main-control-board/)). 
+
+If a ~$15–20 assembled board like this would be useful to you, [Vote here 👍 →](https://github.com/jamro/tiny-engineer/discussions/50) → I’m using the interest to decide whether it’s worth developing further.
+
+**Print → Connect → Flash → Assemble** - step-by-step: **[Getting started](docs/getting-started.md)**.
+
+## Community builds
+
+![Built Tiny Engineer](docs/tiny-engineer-preview.jpg)
+
+Finished builds, mods, and desk setups live in **[Show and tell](https://github.com/jamro/tiny-engineer/discussions/categories/show-and-tell)** on GitHub Discussions - browse what others made and post photos of yours.
+
+**Built one? [Share in Show and tell →](https://github.com/jamro/tiny-engineer/discussions/categories/show-and-tell)**
+
+## Roadmap
+
+What we are building toward:
+
+- **More agent integrations** - one-command hooks for more IDEs and CLIs
+- **Simplified build process** - easier assembly and setup for quicker builds
+- **New characters / bodies** - alternate shells and mods
+- **Multi-agent desk** - more than one tiny teammate
+
+**[Star Tiny Engineer](https://github.com/jamro/tiny-engineer)** to follow the build.
 
 ## How it works
 
 ![How Tiny Engineer works](docs/how-it-works.jpg)
 
-An AI agent works; an integration turns that into events; the robot’s REST API on your LAN receives them; the hardware moves and reacts.
+Your agent (or a hook script) sends poses over **Wi‑Fi HTTP** or **USB serial**. The **ESP32-C3** runs the firmware, optional Wi‑Fi/REST, USB CDC control, and drives the servos, face, and speaker.
 
-**How it connects**
+**Clients**
 
-- **Cursor** — Cursor Agent → Cursor hooks → `tiny-engineer-cursor` → HTTP over Wi-Fi
-- **Antigravity CLI** — Antigravity Agent → lifecycle hooks → `tiny-engineer-antigravity` → HTTP over Wi-Fi
-- **Bring your own** — Claude, Codex, or any other agent → your script/plugin/app → HTTP REST
+- **Default** — [`npx -y tiny-engineer`](https://www.npmjs.com/package/tiny-engineer) (`setup` / `hook`) for Cursor, Claude Code, Antigravity (HTTP or `--transport serial`)
+- **Advanced** — `POST /anim` ([HTTP API](docs/api.md)) or framed USB serial ([serial.md](docs/serial.md))
 
-Both hit the same Tiny Engineer REST API (`/anim`). The ESP32-C3 runs that API, robot logic, and animations, then drives:
-
-| Bus | Hardware | Role |
-| --- | --- | --- |
-| I2C | PCA9685 → 5× servos | Head / neck, hands / body |
-| I2C | Waveshare 0.91inch OLED (SSD1306) | Status, face, info |
-| I2S | MAX98357A → speaker | Audio |
-
-Cursor is one, sample, client, not the architecture. Details: [Cursor hooks](docs/hooks.md) · [any integration](docs/integration.md) · [HTTP API](docs/api.md)
-
-## Build your own
-
-End-to-end path (details live in the linked docs):
-
-New to hardware? Start with **[From Code to Circuits](docs/hardware-for-software-engineers/README.md)** — hardware and electronics for software engineers; Tiny Engineer is the worked example.
-
-1. **Get the electronics** — [hardware inventory](docs/hardware/components.md)
-2. **3D print the parts** — [printables](3d_models/README.md). Different servo size: [parametric CAD](docs/3d/parametric-design.md)
-3. **Assemble the mechanics** — fit the five servos — [3D models](3d_models/README.md), [servo axes](docs/robot-movement.md)
-4. **Wire the electronics** — [wiring](docs/hardware/wiring.md), [hardware overview](docs/hardware/README.md)
-5. **Flash the ESP32 firmware** — [getting started → Flash](docs/getting-started.md#4-flash)
-6. **Configure Wi-Fi** — [getting started → Wi-Fi](docs/getting-started.md#5-wi-fi-setup)
-7. **Test the robot** — web UI + a curl — [getting started → Prove it](docs/getting-started.md#6-prove-it)
-8. **Connect your coding agent** — [Cursor hooks](docs/hooks.md) or [any IDE / REST](docs/integration.md)
-
-Full walkthrough: [docs/getting-started.md](docs/getting-started.md).
-
-## Hardware overview
-
-Major pieces (exact models and counts in the BOM):
-
-| Role | Part | Qty |
-| --- | --- | --- |
-| Controller | Waveshare ESP32-C3-Zero | 1 |
-| Servo PWM | Adafruit PCA9685 | 1 |
-| Actuators | Analog micro servos — **Tower Pro SG90 recommended**; Feetech FS0307 for a compact build; PowerHD HD-1370A still supported | 5 |
-| Display | [Waveshare 0.91inch OLED Module](https://www.waveshare.com/0.91inch-oled-module.htm) (SSD1306, 128×32, I2C) | 1 |
-| Audio | MAX98357A + 8 Ω / 1 W speaker | 1 + 1 |
-| USB / power | Adafruit 5993 USB-C breakout; **5 V / ≥2 A** supply | 1 |
-| Structure | 3D-printed parts | — |
-
-Complete inventory and limits: [docs/hardware/components.md](docs/hardware/components.md). Which servo to buy and which parts to print: [docs/3d/parametric-design.md](docs/3d/parametric-design.md).
-
-## Quick start
-
-Firmware is Arduino on [PlatformIO](https://platformio.org/). From the project root:
-
-```bash
-pio run                 # build
-pio run -t upload       # flash firmware + LittleFS
-pio device monitor      # serial (115200)
-```
-
-If servos move but audio is silent, run `pio run -t uploadfs` once.
-
-**Wi-Fi (first boot):** join `TinyEngineer-XXXX`, open `http://192.168.4.1/config`. Wizard: servos, screen orientation, RGB LED, speaker, then a **2.4 GHz** network. OLED shows the join-AP steps.
-
-**Web UI:** `http://tiny-engineer.local/` (or the IP on the OLED) — settings, hardware tests, animations.
-
-**Make it move:**
-
-```bash
-curl -X POST "http://tiny-engineer.local/anim?name=ring"
-```
-
-Full route list: [docs/api.md](docs/api.md). Settings: [docs/settings.md](docs/settings.md).
-
-## AI integrations
-
-Anything that can `POST` over HTTP can drive the robot:
-
-```bash
-curl -X POST "http://tiny-engineer.local/anim?name=typing"
-```
-
-Useful `name` values: `typing`, `reading`, `thinking`, `ring`, `welcome`, `wakeup`, `sleep`, `attention`, `error`, `abort`, `dead`, `none`.
-
-Cursor projects can map agent events to poses via hooks — [docs/hooks.md](docs/hooks.md). Broader patterns and examples: [docs/integration.md](docs/integration.md). Optional extra: sleep/wake when you lock or unlock a Mac — [docs/macos-lock-unlock.md](docs/macos-lock-unlock.md).
+Details: [Integrations](docs/integration.md) · [HTTP API](docs/api.md) · [USB serial](docs/serial.md) · [Cursor hooks](docs/hooks.md)
 
 ## Documentation
 
-| Goal | Doc |
+| You want to… | Start here |
 | --- | --- |
-| Build end-to-end | [docs/getting-started.md](docs/getting-started.md) |
-| Parts / BOM | [docs/hardware/components.md](docs/hardware/components.md) |
-| Wiring / power | [docs/hardware/README.md](docs/hardware/README.md) |
-| Printable parts | [3d_models/README.md](3d_models/README.md) |
-| Resize CAD for another servo | [docs/3d/parametric-design.md](docs/3d/parametric-design.md) |
-| Servo axes / safe ranges | [docs/robot-movement.md](docs/robot-movement.md) |
-| HTTP API | [docs/api.md](docs/api.md) |
-| Settings | [docs/settings.md](docs/settings.md) |
-| Cursor hooks | [docs/hooks.md](docs/hooks.md) |
-| Any IDE / REST | [docs/integration.md](docs/integration.md) |
-| Firmware / package tests | [docs/testing.md](docs/testing.md) |
-| Full index | [docs/README.md](docs/README.md) |
+| Build the robot | [Getting started](docs/getting-started.md) |
+| Buy parts | [Shopping list](docs/shopping.md) |
+| Flash the board | **[Web flash](https://jamro.github.io/tiny-engineer/flash/)** · [Flash](docs/flash.md) |
+| Assemble the prints | [Assembly](docs/3d/assembly.md) |
+| Print the parts | [3D models](3d_models/README.md) |
+| Hook up an agent | [Integrations](docs/integration.md) |
+| Call the HTTP API | [API](docs/api.md) |
+| Anything else | [Docs index](docs/README.md) |
 
-## Build one, break one, share it
-
-Print it, wire it, change the CAD, swap animations, or hook up a different agent. Issues and PRs welcome — especially new integrations. See [CONTRIBUTING.md](CONTRIBUTING.md). Vulnerabilities: [SECURITY.md](SECURITY.md). Conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
-
-![Tiny Engineer](docs/tiny-engineer-preview.jpg)
+Print it, connect it, change the CAD, or hook up another agent. Issues and PRs welcome - especially new integrations. [CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md) · [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
 ## License
 
 - **Software** (firmware, integrations, scripts, documentation) — [MIT](LICENSE)
-- **Hardware designs** (CAD source and `.3mf` printables in [`3d_models/`](3d_models/); KiCad PCBs in [`hardware/`](hardware/)) — [CERN-OHL-S-2.0](3d_models/LICENSE)
+- **Hardware designs** (CAD source and printables in [`3d_models/`](3d_models/) and under [`mods/*/3d_models/`](mods/); KiCad PCBs in [`hardware/`](hardware/)) — [CERN-OHL-S-2.0](3d_models/LICENSE)
 
-See [LICENSING.md](LICENSING.md) for scope and effective date. The **Tiny Engineer** name and logo are not licensed — see [TRADEMARK.md](TRADEMARK.md).
+See [LICENSING.md](LICENSING.md) for scope and effective date. The **Tiny Engineer** name and logo are not licensed - see [TRADEMARK.md](TRADEMARK.md).

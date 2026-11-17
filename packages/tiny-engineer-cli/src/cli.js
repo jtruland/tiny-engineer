@@ -1,0 +1,351 @@
+import { readFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { DEFAULT_URL, loadDotEnv } from "./config/env.js";
+import {
+  runHealth,
+  runPark,
+  runReset,
+  runServo,
+  runSettings,
+  runTest,
+} from "./commands/parity.js";
+import { runDaemon } from "./daemon/commands.js";
+import { runMonitor } from "./commands/monitor.js";
+import { runPort } from "./commands/port.js";
+import { runRules } from "./commands/rules.js";
+import { runWatch } from "./commands/watch.js";
+import { get as getIntegration, list as listIntegrations } from "./integrations/registry.js";
+import { validateAnimName, validatePlayAnimName } from "./robot/client.js";
+import { formatRobotError, robotPlay, robotSetAnim } from "./robot/transport.js";
+import {
+  parseAnimArgs,
+  parseCommonArgs,
+  parsePlayArgs,
+  stripGlobalFlags,
+} from "./util/args.js";
+import { createOutput } from "./util/output.js";
+import { createStyle, detectColor } from "./util/style.js";
+import { readStdin } from "./util/stdin.js";
+import { runDoctor } from "./wizard/doctor.js";
+import { runSetup } from "./wizard/setup.js";
+import { runUninstall } from "./wizard/uninstall.js";
+
+const { version } = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8"),
+);
+
+function printHelp() {
+  const integrations = listIntegrations().join(", ");
+  console.log(`Usage: tiny-engineer <command> [options]
+
+Unified CLI for the Tiny Engineer desk robot.
+
+Commands:
+  setup [ide...]          Project hooks + user config (URL/transport/token)
+  uninstall [ide...]      Remove Tiny Engineer hook entries (keeps other hooks)
+  doctor                  Check transport, URL/token, user config, hooks, health
+  hook <ide>              Read hook JSON from stdin, map to a pose, set anim
+  anim <name>             Set animation pose
+  play <clip.wav> [opts]  Stream WAV play (HTTP or serial credits)
+  settings [get|set]      Read or write settings
+  test <name>             Run hardware test (audio|bell|screen|movement|led)
+  servo <index> <angle>   Move one servo (degrees)
+  park                    Center servos and hold PWM (flash-safe)
+  health                  Fetch health JSON/summary
+  reset [--yes]           Factory-reset device (confirm or --yes)
+  monitor                 Print serial LOG frames (via the host daemon)
+  watch                   Print outbound events (WebSocket or serial Evt)
+  rules list|add|remove   Run a host program when the robot emits an event
+  port [--probe]          List serial ports and the auto-detect choice
+  daemon start|release|disable|status|restart|install|uninstall|stop
+                          Host session. release closes USB and stays up.
+                          release --yield refuses serial open for 180s.
+                          disable exits and refuses auto-start until start.
+                          stop is a deprecated alias of release.
+
+Options (most commands):
+  --url <base>            Robot base URL (default: TINY_ENGINEER_URL, else ${DEFAULT_URL})
+  --transport <http|serial>
+                          Host transport (flag > TINY_ENGINEER_TRANSPORT > http)
+  --port <path>           Serial port when transport is serial
+  -q, --quiet, --silent   Suppress success/info lines; errors still print
+  -h, --help              Show this help
+  -v, --version           Print version and exit
+
+Config / auth:
+  Connection prefs: user config env (~/.config/tiny-engineer/env; Windows %APPDATA%).
+  Load: flag > process env > project .env > user env > defaults.
+  If TINY_ENGINEER_TOKEN is set, HTTP sends Authorization: Bearer <token>
+  (not sent when URL came only from project .env and token from user/process —
+  request continues without Bearer; stderr warns).
+  Serial transport skips Bearer auth.
+  rules add <type> -- <program> [args...] stores an absolute program path.
+  A relative program path is resolved from the current directory.
+  The daemon does not search PATH. sh -c scripts see the login agent's PATH
+  (/usr/bin:/bin on macOS and Linux), so call programs by absolute path there too.
+  HTTP anim and hooks do not go through the daemon.
+
+Output:
+  Colors/icons when stdout/stderr is a TTY (disabled by NO_COLOR or TERM=dumb).
+  hook                    File touches on stderr; robot errors swallowed (exit 0).
+                          Antigravity always prints decision JSON on stdout.
+  anim / play             Friendly one-line success; exit 1 on errors.
+
+Integrations (hook <ide>):
+  ${integrations || "(none)"}
+
+Examples:
+  tiny-engineer setup cursor --yes
+  tiny-engineer setup cursor --yes --transport serial
+  tiny-engineer uninstall cursor --yes
+  tiny-engineer doctor
+  tiny-engineer anim ring
+  tiny-engineer settings get --transport serial
+  tiny-engineer reset --yes
+  echo '{"hook_event_name":"stop"}' | tiny-engineer hook cursor
+`);
+}
+
+/**
+ * @param {import("./util/output.js").Output} out
+ * @param {string[]} argv
+ * @param {boolean} quietGlobal
+ */
+async function runHook(out, argv, quietGlobal) {
+  const opts = parseCommonArgs(argv);
+  const quiet = quietGlobal || opts.quiet;
+  const localOut = quiet === out.quiet ? out : createOutput({ quiet, style: out.style });
+
+  if (opts.error) {
+    localOut.error(opts.error);
+    process.exitCode = 1;
+    return;
+  }
+  if (opts.help) {
+    printHelp();
+    return;
+  }
+
+  const ide = opts.rest[0];
+  const available = listIntegrations().join(", ") || "(none)";
+  if (!ide) {
+    localOut.error(`hook needs an integration id, e.g. tiny-engineer hook cursor (available: ${available})`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const integration = getIntegration(ide);
+  if (!integration) {
+    localOut.error(`Unknown integration: ${ide} (available: ${available})`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const stdinText = await readStdin();
+  const input = integration.parseHook(opts.rest.slice(1), stdinText);
+  if (!input) {
+    process.exitCode = 0;
+    return;
+  }
+
+  const anim = integration.mapToAnim(input);
+  if (anim) {
+    // Fail-open: ignore result so an offline robot never stalls the agent.
+    await robotSetAnim(anim, { url: opts.url, transport: opts.transport, port: opts.port });
+  }
+
+  const fileLines = integration.describeFiles?.(input, localOut.style) ?? [];
+  for (const line of fileLines) {
+    localOut.info(line);
+  }
+
+  integration.respond?.({ animPosted: Boolean(anim), anim, input });
+
+  // Claude Code async hooks have no timeout; exit so undici connect attempts
+  // cannot linger ~10s after a timed-out POST.
+  if (integration.hardExitAfterPost && anim) {
+    process.exit(0);
+  }
+  process.exitCode = 0;
+}
+
+/**
+ * @param {import("./util/output.js").Output} out
+ * @param {string[]} argv
+ * @param {boolean} quietGlobal
+ */
+async function runAnim(out, argv, quietGlobal) {
+  const opts = parseAnimArgs(argv);
+  const quiet = quietGlobal || opts.quiet;
+  const localOut = quiet === out.quiet ? out : createOutput({ quiet, style: out.style });
+
+  if (opts.error) {
+    localOut.error(opts.error);
+    process.exitCode = 1;
+    return;
+  }
+  if (opts.help) {
+    printHelp();
+    return;
+  }
+
+  const name = /** @type {string} */ (opts.name);
+  const invalid = validateAnimName(name);
+  if (invalid) {
+    localOut.error(invalid);
+    process.exitCode = 1;
+    return;
+  }
+
+  const result = await robotSetAnim(name, {
+    url: opts.url,
+    transport: opts.transport,
+    port: opts.port,
+  });
+  if (!result.ok) {
+    localOut.error(formatRobotError(result));
+    process.exitCode = 1;
+    return;
+  }
+  localOut.ok(`animation ${name} → ${localOut.style.dim(result.target ?? "robot")}`);
+  process.exitCode = 0;
+}
+
+/**
+ * @param {import("./util/output.js").Output} out
+ * @param {string[]} argv
+ * @param {boolean} quietGlobal
+ */
+async function runPlay(out, argv, quietGlobal) {
+  const opts = parsePlayArgs(argv);
+  const quiet = quietGlobal || opts.quiet;
+  const localOut = quiet === out.quiet ? out : createOutput({ quiet, style: out.style });
+
+  if (opts.error) {
+    localOut.error(opts.error);
+    process.exitCode = 1;
+    return;
+  }
+
+  if (opts.name) {
+    const invalid = validatePlayAnimName(opts.name);
+    if (invalid) {
+      localOut.error(invalid);
+      process.exitCode = 1;
+      return;
+    }
+  }
+
+  let wav;
+  try {
+    wav = readFileSync(opts.wavPath);
+  } catch (err) {
+    localOut.error(`cannot read ${opts.wavPath}: ${err.message}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const pose = opts.name ?? "talking";
+  const result = await robotPlay({
+    wav,
+    wavPath: opts.wavPath,
+    name: opts.name,
+    url: opts.url,
+    transport: opts.transport,
+    port: opts.port,
+  });
+  if (!result.ok) {
+    localOut.error(formatRobotError(result));
+    process.exitCode = 1;
+    return;
+  }
+  localOut.ok(
+    `played ${basename(/** @type {string} */ (opts.wavPath))} (${pose}) → ${localOut.style.dim(result.target ?? "robot")}`,
+  );
+  process.exitCode = 0;
+}
+
+/**
+ * @param {string[]} argv
+ */
+export async function run(argv) {
+  loadDotEnv();
+
+  const global = stripGlobalFlags(argv);
+  const style = createStyle({
+    color: detectColor(process.stdout) || detectColor(process.stderr),
+  });
+  const out = createOutput({ quiet: global.quiet, style });
+
+  const args = global.rest;
+  if (args.length === 0 || args[0] === "-h" || args[0] === "--help") {
+    printHelp();
+    return;
+  }
+  if (args[0] === "-v" || args[0] === "--version") {
+    console.log(version);
+    return;
+  }
+
+  const [command, ...rest] = args;
+
+  switch (command) {
+    case "setup":
+      await runSetup(out, rest);
+      return;
+    case "uninstall":
+      await runUninstall(out, rest);
+      return;
+    case "doctor":
+      await runDoctor(out, rest);
+      return;
+    case "hook":
+      await runHook(out, rest, global.quiet);
+      return;
+    case "anim":
+      await runAnim(out, rest, global.quiet);
+      return;
+    case "play":
+      await runPlay(out, rest, global.quiet);
+      return;
+    case "settings":
+      await runSettings(out, rest, global.quiet);
+      return;
+    case "test":
+      await runTest(out, rest, global.quiet);
+      return;
+    case "servo":
+      await runServo(out, rest, global.quiet);
+      return;
+    case "park":
+      await runPark(out, rest, global.quiet);
+      return;
+    case "health":
+      await runHealth(out, rest, global.quiet);
+      return;
+    case "reset":
+      await runReset(out, rest, global.quiet);
+      return;
+    case "monitor":
+      await runMonitor(out, rest);
+      return;
+    case "watch":
+      await runWatch(out, rest);
+      return;
+    case "rules":
+      await runRules(out, rest);
+      return;
+    case "port":
+      await runPort(out, rest);
+      return;
+    case "daemon":
+      await runDaemon(out, rest);
+      return;
+    default:
+      out.error(`Unknown command: ${command}`);
+      printHelp();
+      process.exitCode = 1;
+  }
+}

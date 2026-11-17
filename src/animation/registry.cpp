@@ -1,5 +1,6 @@
 #include "animation/registry.h"
 
+#include <Arduino.h>
 #include <cstddef>
 #include <cstring>
 
@@ -10,6 +11,7 @@
 #include "animation/reading.h"
 #include "animation/ring.h"
 #include "animation/sleep_anim.h"
+#include "animation/talking.h"
 #include "animation/thinking.h"
 #include "animation/typing.h"
 #include "animation/util.h"
@@ -22,15 +24,23 @@
 #include "display/eyes/modes/idle.h"
 #include "display/eyes/modes/reading.h"
 #include "display/eyes/modes/ring.h"
+#include "display/eyes/modes/talking.h"
 #include "display/eyes/modes/thinking.h"
 #include "display/eyes/modes/typing.h"
 #include "display/eyes/modes/wakeup.h"
 #include "display/eyes/modes/welcome.h"
+#include "hardware/servo_wrapper.h"
+#include "network/wifi_connect.h"
 #include "sleep.h"
 
 namespace {
 
+uint32_t g_noneStillSinceMs = 0;
+bool g_noneStillTracking = false;
+
 void startNoneAt(uint32_t /*nowMs*/) {
+  g_noneStillTracking = false;
+  g_noneStillSinceMs = 0;
   anim::stopAnimServos();
   // Sleeping: keep chin-down (same pose wakeup starts from).
   if (isSleeping()) {
@@ -41,12 +51,40 @@ void startNoneAt(uint32_t /*nowMs*/) {
   anim::parkNonePose();
 }
 
+void updateNoneAt(uint32_t nowMs) {
+  updateAllServos();
+
+  if (wifiProvisioningMode()) {
+    g_noneStillTracking = false;
+    return;
+  }
+
+  if (anyServoMoving()) {
+    g_noneStillTracking = false;
+    return;
+  }
+
+  if (!g_noneStillTracking) {
+    g_noneStillTracking = true;
+    g_noneStillSinceMs = nowMs;
+    return;
+  }
+
+  if (nowMs - g_noneStillSinceMs >= SERVO_PWM_RELEASE_DELAY_MS) {
+    releaseAllServoOutputs();
+  }
+}
+
 void startTypingAt(uint32_t /*nowMs*/) {
   startTyping();
 }
 
 void startReadingAt(uint32_t /*nowMs*/) {
   startReading();
+}
+
+void startTalkingAt(uint32_t /*nowMs*/) {
+  startTalking();
 }
 
 void startRingAt(uint32_t /*nowMs*/) {
@@ -85,8 +123,8 @@ void updateWakeupAt(uint32_t nowMs) {
   }
 }
 
-void startSleepAt(uint32_t /*nowMs*/) {
-  startSleepAnim();
+void startSleepAt(uint32_t nowMs) {
+  startSleepAnim(nowMs);
 }
 
 void startDeadAt(uint32_t /*nowMs*/) {
@@ -101,7 +139,7 @@ constexpr ModeEntry kModes[] = {
     false,
     -1,
     startNoneAt,
-    nullptr,
+    updateNoneAt,
     startIdleEyes,
     updateIdleEyes,
   },
@@ -225,6 +263,17 @@ constexpr ModeEntry kModes[] = {
     updateDead,
     startDeadEyes,
     updateDeadEyes,
+  },
+  {
+    AnimationId::Talking,
+    EyeMode::Talking,
+    "talking",
+    true,
+    -1,
+    startTalkingAt,
+    updateTalking,
+    startTalkingEyes,
+    updateTalkingEyes,
   },
 };
 

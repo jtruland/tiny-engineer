@@ -1,0 +1,47 @@
+{
+  "name": "tiny-engineer",
+  "version": "0.4.1",
+  "description": "Tiny Engineer CLI: setup IDE hooks, anim/play over HTTP or USB serial (--transport serial / TINY_ENGINEER_TRANSPORT). Custom agents: REST API (docs/api.md).",
+  "type": "module",
+  "bin": {
+    "tiny-engineer": "bin/tiny-engineer.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "files": [
+    "bin",
+    "src",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "tiny-engineer",
+    "robot",
+    "hooks",
+    "cli",
+    "cursor",
+    "claude-code",
+    "antigravity"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jamro/tiny-engineer.git",
+    "directory": "packages/tiny-engineer-cli"
+  },
+  "homepage": "https://github.com/jamro/tiny-engineer/tree/main/packages/tiny-engineer-cli#readme",
+  "bugs": {
+    "url": "https://github.com/jamro/tiny-engineer/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "serialport": "^13.0.0",
+    "ws": "^8.22.0"
+  }
+}

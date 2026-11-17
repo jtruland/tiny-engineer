@@ -25,7 +25,10 @@ void initPca9685() {
       "Not found"
     );
 
-    haltWithRgbCode(RGB_CODE_PCA9685);
+    haltWithRgbCode(
+      RGB_CODE_PCA9685,
+      "PCA9685 not found on I2C 0x40 — main board required"
+    );
   }
 
   serialLogPrintln("PCA9685 found");

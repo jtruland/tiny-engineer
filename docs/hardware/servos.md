@@ -9,7 +9,7 @@
 | Driver | Adafruit PCA9685, I2C `0x40` |
 | Servo supply | PCA9685 **V+** ← drawing: USB **5V** → PCA9685 **5V** (same servo rail as **V+**; not **VCC**) |
 | PWM frequency | **50 Hz** (`pwm.setPWMFreq(50)`) |
-| Channels | 0, 1, 2, 3, 4 (`SERVO_CHANNELS`) |
+| Channels | 0, 1, 2, 3, 4 (`SERVO_HEAD`…`SERVO_BODY` in `SERVO_SPECS`) |
 
 > [!WARNING]
 > Never power the servos from the ESP32 3.3 V regulator.
@@ -28,7 +28,7 @@ Manufacturer pulse window used in firmware:
 
 `counts = round(pulse_us * 4096 / 20000)`
 
-Effective angular spacing is **~0.63° per count** (~288 distinct positions over 180°). `writeAngle()` skips redundant I2C writes when the rounded count is unchanged.
+Effective angular spacing is **~0.63° per count** (~288 distinct positions over 180°). `writeAngle()` skips redundant I2C writes when the rounded count is unchanged. The PCA9685 keeps emitting that last pulse until a later write — skipping I2C does **not** turn the servo off.
 
 Datasheet travel over 800–2200 µs is **approximately 130°**, while many sellers list 0–180°. Firmware still uses a 0–180 mathematical scale. That scale is **not** a promise of mechanical 180° in the robot.
 
@@ -40,6 +40,7 @@ Verified in [`include/pins.h`](../../include/pins.h) and [`include/servos.h`](..
 | --- | --- | --- |
 | `SERVO_STEP_MS` | 10 | Live update / interpolation step (ms) |
 | `SERVO_ANGLE_DEADBAND_DEG` | **0.32** | Stop threshold (~half PWM count) |
+| `SERVO_PWM_RELEASE_DELAY_MS` | **2000** | After idle/sleep park, hold PWM this long then full-off |
 | `SERVO_MAX_SPEED_DEG_S` | **140.0** | Smooth rate for `POST /test/servo` |
 | `SERVO_BOOT_SPEED_DEG_S` | **35.0** | Boot centering and sleep-pose moves |
 
@@ -47,12 +48,31 @@ Verified in [`include/pins.h`](../../include/pins.h) and [`include/servos.h`](..
 
 On every boot (and after each flash reset):
 
-1. **Optional OE** — if `PCA9685_OE_WIRED`, GP5 disables PCA9685 outputs before I2C init.
+1. **OE** — GP5 drives PCA9685 **OE** (active LOW). Firmware holds OE **HIGH** (outputs off) from early `setup`, then **LOW** after PWM is written (`PCA9685_OE_WIRED = true` in [`include/pins.h`](../../include/pins.h)).
 2. **Early init** — PCA9685 is probed and configured immediately after `Wire.begin`, before OLED, settings, or Wi-Fi.
-3. **Neutral park** — all channels receive mid-pulse PWM while OE is still disabled (if wired), then outputs enable.
+3. **Last-pose restore** — NVS key `spose` (namespace `te`) holds the last commanded angles (5× degrees). While OE is still HIGH, firmware writes those pulses (calibrated mid fallback if missing), then OE goes LOW. That cuts the common flash snap when the robot was already near the saved pose.
 4. **Smooth boot moves** — `centerAllServos()` and sleep-inertia pose use `servoMoveAllSmoothTo()` at `SERVO_BOOT_SPEED_DEG_S` (35°/s), not instant snaps.
 
-Set `PCA9685_OE_WIRED = true` in [`include/pins.h`](../../include/pins.h) after wiring GP5 → PCA9685 **OE**. OE is **active LOW** on the Adafruit breakout.
+### Flash-safe park
+
+Rapid flash/upload can still yank joints if the body drooped after PWM limp (software pose ≠ physical). Mitigations:
+
+| Tool | Role |
+| --- | --- |
+| `POST /servos/park` / serial `servos_park` | Smooth mid, flush `spose`, keep PWM until reboot |
+| PlatformIO `pre:upload` | [`scripts/park_servos_before_upload.py`](../../scripts/park_servos_before_upload.py) shells `tiny-engineer park --transport serial`; warns and continues if the robot is offline |
+| `welcome=0` | Quieter post-boot motion while iterating (optional) |
+| Unplug servo **5 V / V+** | Absolute safety when pose is unknown |
+
+## Idle and sleep PWM release
+
+Analog servos hunt while a 50 Hz pulse is present. Firmware does **not** use OE for this: after animation `none` parks (awake rest or device-sleep chin-down) and every joint is still for `SERVO_PWM_RELEASE_DELAY_MS` (**2000** ms), it writes PCA9685 full-off (`setPWM(channel, 0, 4096)`) on channels 0–4. SIG stays low; the servo goes **limp** (no holding torque). Head pitch can droop; hands-down usually rests on the desk.
+
+Skipped when `POST /servos/park` armed a until-reboot hold, or in setup AP.
+
+The next animation, `/test/servo`, or `/setup/servo` rewrite the last commanded pulse before moving. Leaving `none` restores all five channels at their last angles first.
+
+**Setup AP** (`wifiProvisioningMode`) never releases PWM, so “Move all to 90°” / horn install still holds.
 
 ## Motion modes
 
@@ -65,7 +85,7 @@ Firmware uses two complementary control paths:
 
 Helpers live in [`src/animation/util.cpp`](../../src/animation/util.cpp). Blocking test moves (`moveTo`) also use cubic easing.
 
-`SERVO_MAX_SPEED_DEG_S` (140°/s) is ~28% of PowerHD HD-1370A unloaded max (~500°/s @ 4.8 V) — smoother under load while staying responsive for hand taps. Other presets (SG90, FS0307) still use this firmware cap.
+`SERVO_MAX_SPEED_DEG_S` (140°/s) is ~28% of PowerHD HD-1370A unloaded max (~500°/s @ 4.8 V) — smoother under load while staying responsive for hand taps. Other presets (SG90, FS0307, ES9051) still use this firmware cap.
 
 Bring-up motion (`runServoTest`): each joint uses its **saved** min/max (`n` in −1..1):
 
@@ -92,4 +112,4 @@ Blind 0–180° on the assembled robot can stall gears, tear horns, or brown out
 
 See [robot-movement.md](../robot-movement.md) for layout, axis directions, and per-servo safe angles (`include/servos.h`).
 
-Related: [power.md](power.md), [wiring.md](wiring.md), [testing.md](testing.md).
+Related: [main-control-board.md](main-control-board.md), [power.md](power.md), [testing.md](testing.md). Advanced harness: [wiring.md](wiring.md).

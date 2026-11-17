@@ -3,13 +3,21 @@
 #include <ESPmDNS.h>
 #include <DNSServer.h>
 
+#include <algorithm>
+#include <cstdint>
+
 #include "settings/settings.h"
+#include "settings/wifi_network_list.h"
 #include "network/wifi_connect.h"
 #include "serial_log.h"
 
 namespace {
 
 constexpr unsigned long WIFI_TIMEOUT_MS = 20000;
+// Long enough for the core's retries after "AP not found", which a hidden
+// SSID can need, but short enough that out-of-range networks do not stall
+// boot for the full timeout each.
+constexpr unsigned long WIFI_UNSEEN_TIMEOUT_MS = 8000;
 constexpr unsigned long WIFI_POLL_MS = 500;
 constexpr unsigned long IPV6_TIMEOUT_MS = 2000;
 constexpr size_t AP_SSID_MAX = 20;
@@ -97,7 +105,19 @@ void startMdns(const char* hostname) {
   }
 }
 
-void startCaptiveDns() {
+// Phones open the setup page on their own: DHCP option 114 names the portal
+// URL, and the catch-all DNS sends connectivity probes to the web server.
+void openSetupAp(wifi_mode_t mode) {
+  buildApSsid();
+
+  WiFi.persistent(false);
+  WiFi.mode(mode);
+  WiFi.softAP(apSsid);
+
+  if (!WiFi.AP.enableDhcpCaptivePortal()) {
+    serialLogPrintln("ERROR: DHCP captive portal option failed");
+  }
+
   if (dnsStarted) {
     return;
   }
@@ -119,12 +139,9 @@ void stopCaptiveDns() {
 bool connectSta(
   const char* ssid,
   const char* password,
-  const char* hostnameOverride = nullptr
+  unsigned long timeoutMs = WIFI_TIMEOUT_MS
 ) {
-  const char* hostname =
-    (hostnameOverride != nullptr && hostnameOverride[0] != '\0')
-      ? hostnameOverride
-      : settingsHostname();
+  const char* hostname = settingsHostname();
 
   serialLogPrint("SSID: ");
   serialLogPrintln(ssid);
@@ -141,7 +158,7 @@ bool connectSta(
 
   while (
       WiFi.status() != WL_CONNECTED &&
-      millis() - startMs < WIFI_TIMEOUT_MS
+      millis() - startMs < timeoutMs
   ) {
     delay(WIFI_POLL_MS);
     serialLogPrint(".");
@@ -173,12 +190,57 @@ bool connectSta(
   return true;
 }
 
-void startProvisioningAp() {
-  buildApSsid();
+// Strongest visible network first. Networks the scan missed keep their saved
+// order at the end, since a hidden SSID never shows up in a scan.
+bool connectSavedNetworks() {
+  const WifiNetworkList& networks = settingsWifiNetworks();
+  // A single network is tried with the full timeout, so it needs no scan.
+  // A failed scan (negative result) also gives every network the full timeout.
+  const int found = networks.count() > 1 ? WiFi.scanNetworks() : -1;
+  const bool scanned = found >= 0;
+  int32_t rssi[SETTINGS_WIFI_NETWORK_MAX];
+  size_t order[SETTINGS_WIFI_NETWORK_MAX];
 
-  WiFi.persistent(false);
-  WiFi.mode(WIFI_AP);
-  WiFi.softAP(apSsid);
+  std::fill(rssi, rssi + networks.count(), INT32_MIN);
+
+  for (int i = 0; i < found; i++) {
+    const int index = networks.find(WiFi.SSID(i).c_str());
+
+    if (index >= 0) {
+      rssi[index] = std::max(rssi[index], WiFi.RSSI(i));
+    }
+  }
+
+  WiFi.scanDelete();
+
+  for (size_t i = 0; i < networks.count(); i++) {
+    order[i] = i;
+  }
+
+  std::stable_sort(
+    order,
+    order + networks.count(),
+    [&rssi](size_t a, size_t b) { return rssi[a] > rssi[b]; }
+  );
+
+  return std::any_of(
+    order,
+    order + networks.count(),
+    [&](size_t index) {
+      const WifiNetwork& network = networks.at(index);
+      const bool unseen = scanned && rssi[index] == INT32_MIN;
+
+      return connectSta(
+        network.ssid,
+        network.password,
+        unseen ? WIFI_UNSEEN_TIMEOUT_MS : WIFI_TIMEOUT_MS
+      );
+    }
+  );
+}
+
+void startProvisioningAp() {
+  openSetupAp(WIFI_AP);
 
   const IPAddress apIp = WiFi.softAPIP();
   storeIp(apIp);
@@ -195,8 +257,6 @@ void startProvisioningAp() {
   provisioning = true;
   staConnected = false;
   ipText[0] = '\0';
-
-  startCaptiveDns();
 
   serialLogPrint("AP setup SSID: ");
   serialLogPrintln(apSsid);
@@ -216,6 +276,10 @@ bool wifiProvisioningMode() {
 
 const char* wifiIpText() {
   return ipText;
+}
+
+String wifiMdnsHostname() {
+  return String(settingsHostname()) + ".local";
 }
 
 const char* wifiApSsid() {
@@ -247,38 +311,15 @@ void wifiRestoreProvisioningAp() {
   startProvisioningAp();
 }
 
-bool wifiTestCredentials(
-  const char* ssid,
-  const char* password,
-  const char* hostname
-) {
-  if (ssid == nullptr || password == nullptr) {
-    setConnectError("Missing credentials");
-    return false;
-  }
-
-  if (!settingsValidateWifiSsid(ssid)) {
-    setConnectError("Invalid SSID");
-    return false;
-  }
-
-  if (!settingsValidateWifiPassword(password)) {
-    setConnectError("Password too long");
-    return false;
-  }
-
+bool wifiTestCredentials(const char* ssid, const char* password) {
   serialLogPrintln();
   serialLogPrintln("==========================");
   serialLogPrintln("WIFI TEST (provisioning)");
   serialLogPrintln("==========================");
 
-  buildApSsid();
-  WiFi.persistent(false);
-  WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP(apSsid);
-  startCaptiveDns();
+  openSetupAp(WIFI_AP_STA);
 
-  if (!connectSta(ssid, password, hostname)) {
+  if (!connectSta(ssid, password)) {
     wifiRestoreProvisioningAp();
     return false;
   }
@@ -294,13 +335,19 @@ void runWifiSetup() {
 
   connectError[0] = '\0';
 
+  if (strcmp(settingsLinkMode(), "usb") == 0) {
+    serialLogPrintln("USB-only mode; skipping WiFi and HTTP");
+    provisioning = false;
+    return;
+  }
+
   if (settingsWifiConfigured()) {
     serialLogPrintln("Trying saved WiFi credentials");
 
     WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
 
-    if (connectSta(settingsWifiSsid(), settingsWifiPassword())) {
+    if (connectSavedNetworks()) {
       provisioning = false;
       delay(500);
       return;

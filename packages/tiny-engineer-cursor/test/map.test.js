@@ -34,12 +34,45 @@ test("EVENT_ANIM maps typing events to typing", () => {
     "typing"
   );
   assert.equal(
+    animationForEvent({ hook_event_name: "afterShellExecution" }),
+    "typing"
+  );
+  assert.equal(
+    animationForEvent({ hook_event_name: "beforeMCPExecution" }),
+    "typing"
+  );
+  assert.equal(
+    animationForEvent({ hook_event_name: "afterMCPExecution" }),
+    "typing"
+  );
+  assert.equal(
     animationForEvent({ hook_event_name: "subagentStart" }),
     "typing"
   );
   assert.equal(
     animationForEvent({ hook_event_name: "afterFileEdit" }),
     "typing"
+  );
+});
+
+test("postToolUseFailure maps to none (avoids false-positive error/abort)", () => {
+  assert.equal(
+    animationForEvent({ hook_event_name: "postToolUseFailure" }),
+    "none"
+  );
+  assert.equal(
+    animationForEvent({
+      hook_event_name: "postToolUseFailure",
+      failure_type: "permission_denied",
+    }),
+    "none"
+  );
+  assert.equal(
+    animationForEvent({
+      hook_event_name: "postToolUseFailure",
+      failure_type: "timeout",
+    }),
+    "none"
   );
 });
 
@@ -99,6 +132,25 @@ test("stop maps completed or missing status to ring", () => {
     "ring"
   );
   assert.equal(animationForEvent({ hook_event_name: "stop" }), "ring");
+});
+
+test("skips empty conversation_id or generation_id", () => {
+  assert.equal(
+    animationForEvent({ hook_event_name: "stop", conversation_id: "" }),
+    null
+  );
+  assert.equal(
+    animationForEvent({ hook_event_name: "stop", generation_id: "" }),
+    null
+  );
+  assert.equal(
+    animationForEvent({
+      hook_event_name: "stop",
+      conversation_id: "conv",
+      generation_id: "gen",
+    }),
+    "ring"
+  );
 });
 
 test("skips missing or unknown hook_event_name", () => {

@@ -3,73 +3,31 @@
 #include <Arduino.h>
 #include <Preferences.h>
 
-#include "settings/settings.h"
-
 constexpr const char* kNs = "te";
 constexpr const char* kKeySleep = "sleep_m";
 constexpr const char* kKeyHost = "host";
 constexpr const char* kKeyVolume = "vol";
 constexpr const char* kKeyWelcome = "welcome";
 constexpr const char* kKeySerialLog = "serial_log";
+constexpr const char* kKeyPushButton = "ext_btn";
+constexpr const char* kKeyPushButtonPin = "ext_btn_pin";
+constexpr const char* kKeyBtnSndDn = "btn_snd_dn";
+constexpr const char* kKeyBtnSndUp = "btn_snd_up";
+constexpr const char* kKeyBtnSndClk = "btn_snd_clk";
+constexpr const char* kKeyBtnSndDbl = "btn_snd_dbl";
+constexpr const char* kKeyBtnSndLng = "btn_snd_lng";
 constexpr const char* kKeyContTo = "cont_to";
 constexpr const char* kKeyLoading = "loading";
+constexpr const char* kKeyEyesStyle = "eyes_sty";
 constexpr const char* kKeyAccessTok = "access_tok";
+// Single-network keys from older firmware; moved into kKeyWifiNets at boot.
 constexpr const char* kKeyWifiSsid = "wifi_ssid";
 constexpr const char* kKeyWifiPass = "wifi_pass";
+constexpr const char* kKeyWifiNets = "wifi_nets";
+constexpr const char* kKeyActions = "actions";
 constexpr const char* kKeyServoRanges = "sranges";
 constexpr const char* kKeyRgbOrder = "rgb_ord";
 constexpr const char* kKeyOledRot = "oled_rot";
-constexpr size_t kServoRangesLen = SETTINGS_SERVO_COUNT * 2;
+constexpr const char* kKeyLinkMode = "link_mode";
 
 extern Preferences g_settingsPrefs;
-
-void fillDefaultServoRanges(uint8_t* mins, uint8_t* maxs);
-void packServoRanges(
-  uint8_t* blob,
-  const uint8_t* mins,
-  const uint8_t* maxs
-);
-void unpackServoRanges(
-  const uint8_t* blob,
-  uint8_t* mins,
-  uint8_t* maxs
-);
-
-bool settingsNvsBeginRead();
-bool settingsNvsBeginWrite();
-void settingsNvsEnd();
-void settingsNvsClear();
-
-void settingsNvsPutAll(
-  uint32_t sleepTimeoutMin,
-  const char* hostname,
-  uint8_t volume,
-  bool welcome,
-  bool serialLog,
-  uint32_t continuousTimeoutMin,
-  const char* loading,
-  const char* accessToken,
-  const char* wifiSsid,
-  const char* wifiPassword,
-  const uint8_t* servoMins,
-  const uint8_t* servoMaxs,
-  const char* rgbOrder,
-  bool oledRotate180
-);
-
-bool writeAllToNvs(
-  uint32_t sleepTimeoutMin,
-  const char* hostname,
-  uint8_t volume,
-  bool welcome,
-  bool serialLog,
-  uint32_t continuousTimeoutMin,
-  const char* loading,
-  const char* accessToken,
-  const char* wifiSsid,
-  const char* wifiPassword,
-  const uint8_t* servoMins,
-  const uint8_t* servoMaxs,
-  const char* rgbOrder,
-  bool oledRotate180
-);

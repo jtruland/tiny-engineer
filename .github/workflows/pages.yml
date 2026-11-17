@@ -1,0 +1,283 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "scripts/build_flash_catalog.py"
+      - "scripts/assembly/**"
+      - "scripts/fab/**"
+      - "hardware/boards/main-control-board/**"
+      - "3d_models/cad/**"
+      - "3d_models/parts/*/stl/**"
+      - "3d_models/parts/*/3mf/**"
+      - "3d_models/parts/*/step/**"
+      - "3d_models/fusion/TinyEngineerTools/servos.json"
+      - "scripts/web/**"
+      - ".github/workflows/pages.yml"
+  release:
+    types: [published, edited]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    env:
+      # Match pcb CI; bump with project KiCad major/patch.
+      KICAD_APPIMAGE_VERSION: "10.0.7"
+      KICAD_ROOT: /home/runner/kicad-appimage
+      FAB_TOOLKIT_VERSION: "5.3.1"
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build flash release catalog
+        run: python3 scripts/build_flash_catalog.py
+      - name: Restore assembly GLB cache
+        id: glb-cache
+        uses: actions/cache@v4
+        with:
+          path: web/assembly/models
+          key: assembly-sg90-glb-${{ hashFiles('3d_models/cad/**', '3d_models/parts/*/stl/**', '3d_models/parts/*/step/**', '3d_models/fusion/TinyEngineerTools/servos.json', 'scripts/assembly/**', 'web/assembly/steps.json', 'web/js/assembly/steps.js') }}
+      - uses: actions/setup-python@v5
+        if: steps.glb-cache.outputs.cache-hit != 'true'
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: scripts/assembly/requirements.txt
+      - name: Build 3D assembly model
+        if: steps.glb-cache.outputs.cache-hit != 'true'
+        run: |
+          pip install -r scripts/assembly/requirements.txt
+          scripts/assembly/build.sh web/assembly/models
+      - name: Cache KiCad AppImage extract
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.KICAD_ROOT }}
+          key: kicad-lite-appimage-${{ env.KICAD_APPIMAGE_VERSION }}-pages-pcbnew-v3
+      - name: Cache Fabrication Toolkit
+        uses: actions/cache@v4
+        with:
+          path: artifacts/fab-tools
+          key: fabrication-toolkit-${{ env.FAB_TOOLKIT_VERSION }}-v1
+      - name: Install KiCad 10 (lite AppImage + pcbnew Python)
+        run: |
+          set -euo pipefail
+          VER="${KICAD_APPIMAGE_VERSION}"
+          DEST="${KICAD_ROOT}/${VER}"
+          ARCHIVE="kicad-${VER}-x86_64-lite.AppImage.tar"
+          CLI=""
+          if [ -x "${DEST}/usr/bin/kicad-cli" ]; then
+            CLI="${DEST}/usr/bin/kicad-cli"
+          elif [ -x "${DEST}/bin/kicad-cli" ]; then
+            CLI="${DEST}/bin/kicad-cli"
+          fi
+          if [ -z "${CLI}" ]; then
+            tmp=$(mktemp -d)
+            trap 'rm -rf "${tmp}"' EXIT
+            cd "${tmp}"
+            urls=(
+              "https://kicad-downloads.s3.cern.ch/appimage/stable/${ARCHIVE}"
+              "https://mirrors.mit.edu/kicad/appimage/stable/${ARCHIVE}"
+              "https://downloads.kicad.org/kicad/linux/explore/stable/download/${ARCHIVE}"
+            )
+            downloaded=0
+            for url in "${urls[@]}"; do
+              echo "Downloading ${url}"
+              if curl -fL --retry 5 --retry-all-errors --retry-delay 10 \
+                  --connect-timeout 30 --max-time 900 -o "${ARCHIVE}" "${url}"; then
+                downloaded=1
+                break
+              fi
+              echo "download failed; trying next mirror…"
+            done
+            if [ "${downloaded}" -ne 1 ]; then
+              echo "error: could not download KiCad ${VER} lite AppImage"
+              exit 1
+            fi
+            tar -xf "${ARCHIVE}"
+            appimage=$(echo kicad-*-x86_64-lite.AppImage)
+            chmod +x "${appimage}"
+            "./${appimage}" --appimage-extract
+            root=""
+            if [ -d AppDir ]; then
+              root=AppDir
+            elif [ -d squashfs-root ]; then
+              root=squashfs-root
+            else
+              echo "error: AppImage extract produced neither AppDir nor squashfs-root"
+              ls -la
+              exit 1
+            fi
+            mkdir -p "${KICAD_ROOT}"
+            rm -rf "${DEST}"
+            mv "${root}" "${DEST}"
+            if [ -x "${DEST}/usr/bin/kicad-cli" ]; then
+              CLI="${DEST}/usr/bin/kicad-cli"
+            elif [ -x "${DEST}/bin/kicad-cli" ]; then
+              CLI="${DEST}/bin/kicad-cli"
+            else
+              echo "error: kicad-cli not found under ${DEST}"
+              find "${DEST}" -name kicad-cli 2>/dev/null | head
+              exit 1
+            fi
+          fi
+          echo "KICAD_CLI=${CLI}" >> "${GITHUB_ENV}"
+          echo "KICAD_APPDIR=${DEST}" >> "${GITHUB_ENV}"
+          out=$("${CLI}" version)
+          echo "kicad-cli version: ${out}"
+          case "${out}" in
+            10.*) ;;
+            *)
+              echo "error: need KiCad 10.x, got ${out}"
+              exit 1
+              ;;
+          esac
+          # Resolve AppImage python with pcbnew + wx (Fabrication Toolkit).
+          export KICAD_APPDIR="${DEST}"
+          # shellcheck source=/dev/null
+          source "${GITHUB_WORKSPACE}/scripts/fab/prepare_kicad_appdir_env.sh"
+          {
+            echo "KICAD_PYTHON=${KICAD_PYTHON}"
+            echo "PYTHONPATH=${PYTHONPATH}"
+          } >> "${GITHUB_ENV}"
+          # Do not export AppImage LD_LIBRARY_PATH — shared/lib libc breaks host tools
+          # (GLIBC_2.38). Runtime libs live only inside kicad-python-wrap.sh.
+      - name: Export main-control-board fab package
+        run: |
+          set -euo pipefail
+          # Must use Fabrication Toolkit (same as production/) — no kicad-cli fallback.
+          # KICAD_PYTHON is the AppImage wrap script (sets LD_LIBRARY_PATH per-process).
+          export KICAD_CLI KICAD_APPDIR KICAD_PYTHON PYTHONPATH
+          export FAB_TOOLKIT_VERSION
+          export FAB_CACHE_DIR="${GITHUB_WORKSPACE}/artifacts/fab-tools"
+          export FAB_REQUIRE_TOOLKIT=1
+          ./scripts/fab/export_main_control_board.sh
+          test -s web/shop/fab/main-control-board/gerbers.zip
+          test -s web/shop/fab/main-control-board/bom.csv
+          test -s web/shop/fab/main-control-board/positions.csv
+          grep -q 'method: fabrication-toolkit' web/shop/fab/main-control-board/SOURCE.txt
+          echo "Fab package:"
+          ls -la web/shop/fab/main-control-board/
+          cat web/shop/fab/main-control-board/SOURCE.txt
+          # Spot-check CPL matches Toolkit conventions (pad-center connectors).
+          head -n 5 web/shop/fab/main-control-board/positions.csv
+          head -n 5 web/shop/fab/main-control-board/bom.csv
+      - name: Sync print mesh files
+        run: |
+          set -euo pipefail
+          chmod +x scripts/web/sync-print-files.sh
+          ./scripts/web/sync-print-files.sh
+          test -s web/print/files/sg90/Head.3mf
+          test -s web/print/files/sg90/Head.stl
+          test -s web/print/files/fs0307/Head.stl
+          test -s web/print/files/es9051/Head.stl
+      - name: Inject Clarity
+        env:
+          CLARITY_PROJECT_ID: ${{ vars.CLARITY_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          test -n "${CLARITY_PROJECT_ID}"
+          python3 <<'PY'
+          import os
+          from pathlib import Path
+
+          pid = os.environ["CLARITY_PROJECT_ID"].strip()
+          if not pid or any(c in pid for c in "\"'<>"):
+              raise SystemExit("invalid CLARITY_PROJECT_ID")
+
+          snippet = f"""<script type="text/javascript">
+          (function(c,l,a,r,i,t,y){{
+              c[a]=c[a]||function(){{(c[a].q=c[a].q||[]).push(arguments)}};
+              t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+              y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+          }})(window, document, "clarity", "script", "{pid}");
+          </script>
+          """
+
+          skip = {"web/pcba_test/index.html"}
+          injected = 0
+          for path in sorted(Path("web").rglob("*.html")):
+              rel = path.as_posix()
+              if rel in skip:
+                  continue
+              text = path.read_text(encoding="utf-8")
+              if "clarity.ms/tag/" in text or "</head>" not in text:
+                  continue
+              path.write_text(
+                  text.replace("</head>", snippet + "</head>", 1),
+                  encoding="utf-8",
+              )
+              print(f"clarity: {rel}")
+              injected += 1
+
+          if injected == 0:
+              raise SystemExit("Inject Clarity: no HTML files updated")
+          print(f"clarity: injected into {injected} files")
+          PY
+      - name: Inject Umami
+        env:
+          UMAMI_WEBSITE_ID: ${{ vars.UMAMI_WEBSITE_ID }}
+        run: |
+          set -euo pipefail
+          test -n "${UMAMI_WEBSITE_ID}"
+          python3 <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          wid = os.environ["UMAMI_WEBSITE_ID"].strip()
+          if not re.fullmatch(
+              r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+              wid,
+          ):
+              raise SystemExit("invalid UMAMI_WEBSITE_ID")
+
+          snippet = (
+              f'<script defer src="https://cloud.umami.is/script.js" '
+              f'data-website-id="{wid}"></script>\n'
+          )
+
+          skip = {"web/pcba_test/index.html"}
+          injected = 0
+          for path in sorted(Path("web").rglob("*.html")):
+              rel = path.as_posix()
+              if rel in skip:
+                  continue
+              text = path.read_text(encoding="utf-8")
+              if "cloud.umami.is/script.js" in text or "</head>" not in text:
+                  continue
+              path.write_text(
+                  text.replace("</head>", snippet + "</head>", 1),
+                  encoding="utf-8",
+              )
+              print(f"umami: {rel}")
+              injected += 1
+
+          if injected == 0:
+              raise SystemExit("Inject Umami: no HTML files updated")
+          print(f"umami: injected into {injected} files")
+          PY
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

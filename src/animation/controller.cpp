@@ -26,15 +26,31 @@ uint32_t g_continuousStartedMs = 0;
 bool g_hasPendingAnimation = false;
 AnimationId g_pendingAnimation = AnimationId::None;
 
+// Awake/Opening wakeup: no clip; drop pending sleep; reset idle timer.
+bool ignoreWakeupIfAwake(uint32_t nowMs) {
+  if (sleepAllowsWakeup()) {
+    return false;
+  }
+
+  if (g_hasPendingAnimation &&
+      g_pendingAnimation == AnimationId::Sleep) {
+    g_hasPendingAnimation = false;
+  }
+
+  noteActivity(nowMs);
+  serialLogPrintln("[anim] ignore wakeup (awake)");
+  return true;
+}
+
 void applyAnimation(AnimationId id, uint32_t nowMs) {
-  if (id != AnimationId::Attention) {
-    stopAttentionPlayback();
+  if (id == AnimationId::Wakeup && ignoreWakeupIfAwake(nowMs)) {
+    return;
   }
-  if (id != AnimationId::Error && id != AnimationId::Dead) {
-    stopErrorPlayback();
-  }
-  if (id != AnimationId::Abort) {
-    stopAbortPlayback();
+
+  // Only tear down a stream owned by the previous anim. Orphan Action/button
+  // SFX must survive transitions into Sleep/Wakeup/typing/etc.
+  if (animationDrivesWavStream(g_animation) && g_animation != id) {
+    stopAllWavPlayback();
   }
 
   const ModeEntry* fromEntry = modeByAnimId(g_animation);
@@ -45,6 +61,10 @@ void applyAnimation(AnimationId id, uint32_t nowMs) {
   serialLogPrint(" -> ");
   serialLogPrintln(entry->name);
   anim::logServoSnapshot("pre-transition");
+
+  if (g_animation == AnimationId::None && id != AnimationId::None) {
+    ensureAllServoOutputs();
+  }
 
   // Raise head out of sleep pose before the new anim claims servos.
   // None / Sleep / Wakeup must keep chin-down (or own the rise).
@@ -86,6 +106,10 @@ void setAnimation(AnimationId id) {
     return;
   }
 
+  if (id == AnimationId::Wakeup && ignoreWakeupIfAwake(millis())) {
+    return;
+  }
+
   if (animationHoldElapsed()) {
     applyAnimation(id, millis());
     return;
@@ -100,6 +124,10 @@ void setAnimation(AnimationId id) {
   serialLogPrint(modeByAnimId(id)->name);
   serialLogPrint(" holdLeftMs=");
   serialLogPrintln(holdLeftMs);
+}
+
+void setAnimationImmediately(AnimationId id) {
+  applyAnimation(id, millis());
 }
 
 void finishAnimation(uint32_t nowMs) {
@@ -120,6 +148,20 @@ AnimationId pendingAnimation() {
 
 bool animationIsContinuous(AnimationId id) {
   return modeByAnimId(id)->continuous;
+}
+
+bool animationDrivesWavStream(AnimationId id) {
+  switch (id) {
+    case AnimationId::Ring:
+    case AnimationId::Welcome:
+    case AnimationId::Attention:
+    case AnimationId::Error:
+    case AnimationId::Abort:
+    case AnimationId::Dead:
+      return true;
+    default:
+      return false;
+  }
 }
 
 const char* animationName(AnimationId id) {

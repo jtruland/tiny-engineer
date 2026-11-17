@@ -1,3 +1,5 @@
 #pragma once
 
-void registerHttpRoutes();
+#include <WebServer.h>
+
+void registerHttpRoutes(WebServer& server);

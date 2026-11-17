@@ -26,6 +26,18 @@ constexpr float TYPING_HEAD_HIGH = TYPING_HEAD_LOW + TYPING_HEAD_BAND;
 constexpr float TYPING_BODY_MID = 0.0f;
 constexpr float TYPING_NECK_MID = 0.0f;
 
+// Talking faces the user: head just above mid, nodding on emphasis, neck drifting.
+constexpr float TALKING_HEAD_MID = 1.0f / 7.0f;
+constexpr float TALKING_HEAD_NOD = 2.0f / 7.0f;
+constexpr float TALKING_HEAD_NOD_AMBIENT = 1.0f / 7.0f;
+constexpr float TALKING_HEAD_LEVEL = 1.0f / 14.0f;
+constexpr float TALKING_NECK_SWAY = 1.0f / 6.0f;
+constexpr float TALKING_BODY_SWAY = 1.0f / 10.0f;
+constexpr float TALKING_HAND_LIFT = TYPING_HAND_BAND * 2.0f;
+constexpr float TALKING_HAND_LIFT_AMBIENT = TYPING_HAND_BAND * 1.4f;
+constexpr float TALKING_EMPHASIS_NOD = 0.18f;
+constexpr uint32_t TALKING_NOD_COOLDOWN_MS = 160;
+
 constexpr float READING_HEAD_LOW = -1.0f;
 constexpr float READING_HEAD_HIGH = READING_HEAD_LOW + READING_HEAD_BAND;
 constexpr float READING_NECK_MID = 0.0f;
@@ -85,6 +97,7 @@ constexpr float ABORT_HEAD_ANYWAY = 18.0f / 35.0f;
 // Idle sleep / boot sleep-inertia: chin down, then rise to mid on wake.
 constexpr float SLEEP_HEAD_DOWN = -4.0f / 7.0f;
 constexpr float SLEEP_HEAD_AWAKE = 0.0f;
+constexpr uint32_t SLEEP_NOD_OFF_MS = 2000;
 constexpr float ABORT_HAND_RIGHT_UP = 1.0f;
 constexpr float ABORT_HAND_RIGHT_SHRUG = 7.0f / 9.0f;
 constexpr float ABORT_HAND_LEFT_UP = -2.0f / 9.0f;
@@ -92,6 +105,5 @@ constexpr float ABORT_HAND_LEFT_SHRUG = 2.0f / 45.0f;
 
 // Power-loss collapse: chin fully down, hands parked.
 constexpr float DEAD_HEAD_DOWN = -1.0f;
-constexpr float DEAD_COLLAPSE_SPEED_DEG_S = 48.0f;
 
 }  // namespace anim

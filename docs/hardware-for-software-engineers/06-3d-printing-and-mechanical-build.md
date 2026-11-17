@@ -29,6 +29,8 @@ Supports leave scars, use filament, and make small holes and servo pockets messy
 
 All parts were printed and test-fitted on a **Creality Ender 3 V3 SE**. You should be able to print them on **any FDM printer** that can run PLA (or PETG) at typical hobby settings — the files are not locked to that machine.
 
+No printer? You can [order the aggregated part sets from a third-party service](../3d/order-parts.md) instead of printing at home, then continue with assembly.
+
 ---
 
 ## Materials: PLA vs PETG
@@ -41,6 +43,10 @@ All parts were printed and test-fitted on a **Creality Ender 3 V3 SE**. You shou
 | **PETG** | Also fine. Slightly stronger; not required |
 
 Antenna zone: keep plastic thin/light near the ESP32 ceramic antenna. No metal paint, no foil wrap "for aesthetics."
+
+### Special: LampDiffuser
+
+The lamp diffuser is **one-line thin** on purpose (light transmission). Some slicers drop the walls or report empty layers unless thin-wall / Arachne settings are on. White or translucent filament. Full per-slicer notes: [LampDiffuser (thin walls)](../../3d_models/README.md#lampdiffuser-thin-walls).
 
 ---
 
@@ -56,7 +62,9 @@ The models are **prepared with clearance** so printed parts and hardware (servos
 
 > **If you've written backend code…** Printed holes are like JSON numbers — `2.0` isn't exactly 2.0 after float serialization. These files already budget slack; a badly calibrated printer can still eat it.
 
-**Screws:** assembly uses **2 mm diameter** screws, no glue. Exact lengths/counts aren't fully documented yet — use the [parts table](../../3d_models/README.md) as inventory and test fit as you go.
+**Screws:** assembly uses **M2** screws that thread directly into the printed plastic — no glue, no heat-set inserts. Shopping list (M2×4 / ×8 / ×16 + nuts; same lengths for every servo preset) lives in the [3D models README](../../3d_models/README.md#screws). Join order: [assembly guide](../3d/assembly.md). Test fit as you go.
+
+**If M2 screws feel loose (slide instead of cutting a thread):** print tolerances ate the pilot. Print [`ScrewSizingTest.3mf`](../../3d_models/README.md#print-first) first (alongside [`ServoSizingTester`](../../3d_models/README.md#print-first)), pick the labeled hole that bites firmly, set Fusion `screw_thread_diameter` to that diameter, and re-export. CAD default / shipped parts use **2.1 mm**. Full write-up: [M2 screw holes](../3d/parametric-design.md#m2-screw-holes).
 
 ---
 
@@ -79,13 +87,14 @@ The models are **prepared with clearance** so printed parts and hardware (servos
 - Antenna keep-out adjustment
 - Desk/chair scale for your desk
 
-Parts use **2 mm** screws. Servo pockets follow the selected Fusion preset, not one fixed body size. Swapping servos means picking a preset (or adding one) and reprinting — not just firmware. Servo user parameters, the Fusion add-in (configurator + exporter), and how to add a preset: [parametric design](../3d/parametric-design.md).
+Parts use **M2** screws (`screw_thread_diameter` pilot). Servo pockets follow the selected Fusion preset, not one fixed body size. Swapping servos means picking a preset (or adding one) and reprinting — not just firmware. Servo user parameters, screw pilots, the Fusion add-in (configurator + exporter), and how to add a preset: [parametric design](../3d/parametric-design.md).
 
 ### Export workflow
 
 1. Open `TinyEngineer.f3d` in Fusion (free personal license exists)
-2. Apply a servo preset, then export with **Tiny Engineer Parts Exporter** into `parts/{servo_id}/3mf/` (see [parametric design](../3d/parametric-design.md))
-3. Print and test fit
+2. Apply a servo preset; set `screw_thread_diameter` from your [`ScrewSizingTest`](../../3d_models/README.md#print-first) if needed
+3. Export with **Tiny Engineer Parts Exporter** into `parts/{servo_id}/3mf/` (see [parametric design](../3d/parametric-design.md))
+4. Print testers first, then the rest, and test fit
 
 Manual single-body export is fine for a one-off tweak; keep the file under that servo’s `3mf/` folder, not a flat `3d_models/parts/` dump.
 
@@ -95,7 +104,7 @@ Alternatives (FreeCAD, Onshape) can work but project source is Fusion.
 
 ## Mechanical assembly principles
 
-Full step-by-step SOP is still a doc gap — these principles keep you out of trouble:
+Step-by-step SOP: [assembly.md](../3d/assembly.md). Use that guide for the build sequence; principles below cover key failure modes.
 
 ### Servo installation
 
@@ -109,7 +118,7 @@ Command each joint through safe range ([robot-movement.md](../robot-movement.md)
 
 ### USB and service access
 
-Leave the USB-C breakout reachable for reflash. You'll flash again. Trust me.
+Leave the main control board USB-C reachable for reflash. You'll flash again. Trust me. The advanced path uses a 5993 in that same role — [wiring.md](../hardware/wiring.md).
 
 ### Antenna clearance
 
@@ -129,10 +138,10 @@ Part list: [3d_models/README.md](../../3d_models/README.md).
 
 ## Print while you wait — parallel path
 
-Electronics can ship slow. Start printing **structural parts** (chest, head, chair) while reading [Ch. 04](04-buses-and-protocols.md) and wiring on a bench without the shell. Parallelism beats serial idle time.
+Electronics can ship slow. Start printing **structural parts** (chest, head, chair) while reading [Ch. 04](04-buses-and-protocols.md). Connect and smoke at checklist [§3–4](../getting-started.md#3-connect) — still on the desk — then one assembly run. Parallelism beats serial idle time.
 
 ---
 
 **Next:** [Power budgets and safety](07-power-budgets-and-safety.md)
 
-**Reference:** [3d_models/README.md](../../3d_models/README.md) · [cad/TinyEngineer.f3d](../../3d_models/cad/TinyEngineer.f3d) · [parametric design](../3d/parametric-design.md) · [robot-movement.md](../robot-movement.md)
+**Reference:** [assembly.md](../3d/assembly.md) · [3d_models/README.md](../../3d_models/README.md) · [cad/TinyEngineer.f3d](../../3d_models/cad/TinyEngineer.f3d) · [parametric design](../3d/parametric-design.md) · [robot-movement.md](../robot-movement.md)

@@ -2,20 +2,24 @@
 
 ## Architecture
 
-One common **nominal 5 V** rail feeds the robot.
+USB-C brings in a **nominal 5 V**. On the [main control board](../../hardware/boards/main-control-board/README.md) that splits into a logic/host rail and a protected servo (and amp) rail.
 
 | Net | Source | Loads |
 | --- | --- | --- |
-| **+5V** | Adafruit 5993 **VBUS** (USB **5V** in the wiring PNG) | ESP32 **5V**, PCA9685 **5V**, MAX98357A **Vin**; servos from PCA9685 **V+** |
-| **3V3** | ESP32 onboard LDO, from the 5 V input | ESP32 core/GPIO, PCA9685 **VCC**, OLED **VCC** |
-| **GND** | 5993 GND + ESP32 GND | Everything |
+| **+5V** | USB-C **VBUS** → 3 A PPTC fuse | ESP32 **5V**, 5 V indicator, eFuse input |
+| **SERVO_5V** | TPS259571 eFuse out of **+5V** (~2 A via `R14`) | Servo header 5 V pins, bulk capacitor; amp supply via net tie |
+| **AUDIO_5V** | Net-tied from **SERVO_5V** (not raw **+5V**) | MAX98357A **Vin** |
+| **3V3** | ESP32 onboard LDO, from the 5 V input | ESP32 core/GPIO, PCA9685 **VCC** / **VDD**, OLED **VCC**, I2C pull-ups |
+| **GND** | Board USB-C GND + ESP32 GND | Everything |
 
-ESP32 internally runs at 3.3 V logic. Servo power **does not** pass through the ESP32 3.3 V regulator. As drawn: USB **5V** → PCA9685 **5V**; PCA9685 **V+** → servo **5V**; PCA9685 **VCC** ← ESP32 **3V3**.
+ESP32 internally runs at 3.3 V logic. Servo power **does not** pass through the ESP32 3.3 V regulator. On the main control board: **+5V** feeds the module **5V** pad; **SERVO_5V** feeds the servo plugs; PCA9685 **VDD** ← **3V3**. The chip has no package “V+” pin — servo 5 V is a board distribution net to the connector (same idea as Adafruit breakout **V+**). The advanced breakout harness draws equivalent nets without the board eFuse — [wiring.md](wiring.md).
 
 > [!WARNING]
 > Never power the servos from the ESP32 3.3 V regulator.
 
 Waveshare documents the C3-Zero LDO as ME6217C33M5G (hundreds of mA class). That is enough for logic + OLED + PCA9685 digital. It is **not** a servo supply.
+
+Multi-servo stall can hit the eFuse’s ~2 A limit before the 3 A resettable fuse trips. Use a **5 V / ≥ 2 A** supply; expect occasional **SERVO_5V** (and amp) cutouts under heavy load, then auto-retry.
 
 ## Servo current (worst case)
 
@@ -38,17 +42,17 @@ This **excludes**:
 - MAX98357A + speaker peaks
 - USB host current shared with programming when flashing over the same cable
 
-## USB-C 5993 vs real supply
+## USB supply
 
-Adafruit 5993 CC resistors ask the upstream port for **5 V / up to ~1.5 A**. Whether 1.5 A actually arrives depends on the charger/port.
+Power and data enter on the **main control board USB-C** (one cable). Nets: VBUS → fuse → **+5V**, GND, D− → GPIO18, D+ → GPIO19. Servos and the amp sit behind the eFuse on **SERVO_5V** / **AUDIO_5V**. Details: [interfaces.md](interfaces.md).
 
-Five HD-1370A servos at stall (~1.3 A @ 4.8 V) plus the rest of the robot leaves **little safety margin** on a 1.5 A USB source. SG90 stall is typically higher still.
+Two 5.1 kΩ CC resistors on the board mark it as a USB device. The charger decides how much current arrives. Use a **5 V / ≥ 2 A** source, with extra margin if several servos move **while audio plays**. The connector is **not** USB-PD voltage conversion. Feed it 5 V USB.
 
-Recommendation:
+Five HD-1370A servos at stall (~1.3 A @ 4.8 V) plus the rest of the robot leaves little safety margin on a 1.5 A port. SG90 stall is typically higher still.
 
-- **5 V / ≥ 2 A**, with extra margin if several servos can move **while audio plays**.
-- 5993 remains a convenient connector; it does not raise the current ceiling above what the source and CC advertisement allow.
-- 5993 is **not** USB-PD voltage conversion. Feed it 5 V USB, or bypass it with a dedicated 5 V / ≥2 A PSU on the +5V and GND rails.
+Leave the ESP32-C3-Zero **onboard USB-C unused** when the robot is assembled so two 5 V sources cannot fight on the same rail. That one cable supplies robot power and programming / serial CDC (`ARDUINO_USB_MODE=1`, `ARDUINO_USB_CDC_ON_BOOT=1`, monitor 115200).
+
+Advanced path (Adafruit 5993, CC resistors advertising up to ~1.5 A): [wiring.md](wiring.md#usb-connector-5993).
 
 ## Insufficient-power symptoms
 
@@ -63,19 +67,4 @@ If the rail sags under servo or audio load:
 
 Bring-up test turns all five servos together — that is a power-stress moment.
 
-## Single USB (5993)
-
-The robot uses **one** USB-C connector: the Adafruit 5993.
-
-| Net | 5993 | ESP32 |
-| --- | --- | --- |
-| +5V | **VBUS** | **5V** pad (and the shared +5V rail) |
-| GND | **GND** | **GND** |
-| USB D− | **D−** | **GPIO18** (native USB D−) |
-| USB D+ | **D+** | **GPIO19** (native USB D+) |
-
-That one cable supplies robot power and programming / serial CDC (`ARDUINO_USB_MODE=1`, `ARDUINO_USB_CDC_ON_BOOT=1`, monitor 115200).
-
-Leave the ESP32-C3-Zero **onboard USB-C unused** when the robot is assembled so two 5 V sources cannot fight on the same rail. For early bare-module flashing before 5993 data is wired, the onboard port is fine.
-
-Related: [wiring.md](wiring.md), [components.md](components.md), [interfaces.md](interfaces.md).
+Related: [main-control-board.md](main-control-board.md), [components.md](components.md), [interfaces.md](interfaces.md). Advanced harness: [wiring.md](wiring.md).

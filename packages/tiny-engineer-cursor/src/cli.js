@@ -7,6 +7,9 @@ const DEFAULT_URL = "http://tiny-engineer.local";
 function printHelp() {
   console.log(`Usage: tiny-engineer-cursor [options]
 
+Deprecated: use \`tiny-engineer hook cursor\` (packages/tiny-engineer-cli).
+For custom agents, call the REST API (docs/api.md / docs/integration.md).
+
 Cursor hook helper: read event JSON from stdin, pick an animation, POST to the robot.
 
 Options:
@@ -21,13 +24,16 @@ Auth:
 Hook mode (no animation args):
   Cursor pipes JSON with hook_event_name (tool_name for preToolUse,
   status for stop). The CLI maps the event to reading / thinking / typing /
-  ring / abort / error and POSTs \${url}/anim?name=…. Unknown or unmatched events
-  exit 0 with no request.
+  ring / abort / error and POSTs \${url}/anim?name=…. Unknown or unmatched events,
+  and events whose conversation_id or generation_id is "", exit 0 with no request.
 
 Event map:
   sessionStart, beforeSubmitPrompt, beforeReadFile  → reading
   afterAgentThought, preCompact                     → thinking
-  beforeShellExecution, subagentStart, afterFileEdit → typing
+  beforeShellExecution, afterShellExecution,
+  beforeMCPExecution, afterMCPExecution,
+  subagentStart, afterFileEdit                      → typing
+  postToolUseFailure                                → none
   stop + status aborted                             → abort
   stop + status error                               → error
   stop (completed / missing / other)                → ring

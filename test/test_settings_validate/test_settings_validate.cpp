@@ -42,11 +42,42 @@ void test_volume() {
   TEST_ASSERT_FALSE(settingsValidateVolume(101));
 }
 
+void test_push_button_pin() {
+  TEST_ASSERT_TRUE(settingsValidatePushButtonPin(6));
+  TEST_ASSERT_TRUE(settingsValidatePushButtonPin(7));
+  TEST_ASSERT_TRUE(settingsValidatePushButtonPin(20));
+  TEST_ASSERT_TRUE(settingsValidatePushButtonPin(21));
+  TEST_ASSERT_FALSE(settingsValidatePushButtonPin(8));
+  TEST_ASSERT_FALSE(settingsValidatePushButtonPin(9));
+  TEST_ASSERT_FALSE(settingsValidatePushButtonPin(0));
+  TEST_ASSERT_FALSE(settingsValidatePushButtonPin(19));
+}
+
+void test_push_button_sound_legacy_validate() {
+  // Legacy NVS load still validates these strings during Actions migration.
+  TEST_ASSERT_TRUE(settingsValidatePushButtonSound("none"));
+  TEST_ASSERT_TRUE(settingsValidatePushButtonSound("bell"));
+  TEST_ASSERT_TRUE(settingsValidatePushButtonSound("click"));
+  TEST_ASSERT_FALSE(settingsValidatePushButtonSound("welcome"));
+  TEST_ASSERT_FALSE(settingsValidatePushButtonSound(""));
+  TEST_ASSERT_FALSE(settingsValidatePushButtonSound(nullptr));
+}
+
 void test_loading() {
   TEST_ASSERT_TRUE(settingsValidateLoading("progress"));
   TEST_ASSERT_TRUE(settingsValidateLoading("sleep_inertia"));
   TEST_ASSERT_FALSE(settingsValidateLoading("other"));
   TEST_ASSERT_FALSE(settingsValidateLoading(nullptr));
+}
+
+void test_eyes_style() {
+  TEST_ASSERT_TRUE(settingsValidateEyesStyle("classic"));
+  TEST_ASSERT_TRUE(settingsValidateEyesStyle("kaomoji"));
+  TEST_ASSERT_TRUE(settingsValidateEyesStyle("cover"));
+  TEST_ASSERT_TRUE(settingsValidateEyesStyle("dots"));
+  TEST_ASSERT_TRUE(settingsValidateEyesStyle("kawaii"));
+  TEST_ASSERT_FALSE(settingsValidateEyesStyle("other"));
+  TEST_ASSERT_FALSE(settingsValidateEyesStyle(nullptr));
 }
 
 void test_access_token() {
@@ -62,6 +93,9 @@ void test_access_token() {
   TEST_ASSERT_TRUE(settingsValidateAccessToken(token64));
   TEST_ASSERT_FALSE(settingsValidateAccessToken(token65));
   TEST_ASSERT_FALSE(settingsValidateAccessToken("foo\x01" "bar"));
+  TEST_ASSERT_TRUE(settingsValidateAccessToken("two words"));
+  TEST_ASSERT_FALSE(settingsValidateAccessToken(" leading"));
+  TEST_ASSERT_FALSE(settingsValidateAccessToken("trailing "));
   TEST_ASSERT_FALSE(settingsValidateAccessToken(nullptr));
 }
 
@@ -97,18 +131,48 @@ void test_wifi_password() {
 }
 
 void test_servo_ranges() {
-  const uint8_t validMin[SETTINGS_SERVO_COUNT] = {10, 20, 30, 40, 50};
-  const uint8_t validMax[SETTINGS_SERVO_COUNT] = {20, 30, 40, 50, 60};
-  const uint8_t equalMin[SETTINGS_SERVO_COUNT] = {10, 20, 30, 40, 50};
-  const uint8_t equalMax[SETTINGS_SERVO_COUNT] = {10, 30, 40, 50, 60};
-  const uint8_t overMin[SETTINGS_SERVO_COUNT] = {10, 20, 30, 40, 50};
-  const uint8_t overMax[SETTINGS_SERVO_COUNT] = {20, 30, 40, 50, 181};
+  const ServoRanges valid = {{10, 20, 30, 40, 50}, {20, 30, 40, 50, 180}};
+  const ServoRanges equal = {{10, 20, 30, 40, 50}, {20, 30, 40, 50, 50}};
+  const ServoRanges over = {{10, 20, 30, 40, 50}, {20, 30, 40, 50, 181}};
 
-  TEST_ASSERT_FALSE(settingsValidateServoRanges(nullptr, validMax));
-  TEST_ASSERT_FALSE(settingsValidateServoRanges(validMin, nullptr));
-  TEST_ASSERT_FALSE(settingsValidateServoRanges(equalMin, equalMax));
-  TEST_ASSERT_FALSE(settingsValidateServoRanges(overMin, overMax));
-  TEST_ASSERT_TRUE(settingsValidateServoRanges(validMin, validMax));
+  TEST_ASSERT_TRUE(valid.valid());
+  TEST_ASSERT_FALSE(equal.valid());
+  TEST_ASSERT_FALSE(over.valid());
+}
+
+void test_patch_names_the_first_invalid_field() {
+  SettingsPatch patch;
+
+  TEST_ASSERT_NULL(patch.invalidField());
+
+  patch.volume = 50;
+  patch.hostname = "tiny-engineer";
+  TEST_ASSERT_NULL(patch.invalidField());
+
+  patch.volume = 101;
+  patch.rgbOrder = "XYZ";
+  TEST_ASSERT_EQUAL_STRING("volume", patch.invalidField());
+
+  patch.volume = 100;
+  patch.pushButtonPin = 8;
+  TEST_ASSERT_EQUAL_STRING("push_button_pin", patch.invalidField());
+
+  patch.pushButtonPin = 20;
+  TEST_ASSERT_EQUAL_STRING("rgb_order", patch.invalidField());
+}
+
+void test_patch_names_its_setup_only_step() {
+  SettingsPatch patch;
+
+  patch.volume = 50;
+  patch.hostname = "tiny-engineer";
+  TEST_ASSERT_NULL(patch.setupOnlyStep());
+
+  patch.oledRotate180 = false;
+  TEST_ASSERT_EQUAL_STRING("oled", patch.setupOnlyStep());
+
+  patch.servoRanges = ServoRanges{{10, 20, 30, 40, 50}, {20, 30, 40, 50, 60}};
+  TEST_ASSERT_EQUAL_STRING("servo", patch.setupOnlyStep());
 }
 
 void test_rgb_order() {
@@ -123,6 +187,40 @@ void test_rgb_order() {
   TEST_ASSERT_FALSE(settingsValidateRgbOrder(nullptr));
 }
 
+void test_link_mode() {
+  TEST_ASSERT_TRUE(settingsValidateLinkMode(""));
+  TEST_ASSERT_TRUE(settingsValidateLinkMode("wifi"));
+  TEST_ASSERT_TRUE(settingsValidateLinkMode("usb"));
+  TEST_ASSERT_FALSE(settingsValidateLinkMode("ble"));
+  TEST_ASSERT_FALSE(settingsValidateLinkMode(nullptr));
+}
+
+void test_link_mode_patch_rejects_empty() {
+  SettingsPatch patch;
+  patch.linkMode = "";
+  TEST_ASSERT_EQUAL_STRING("link_mode", patch.invalidField());
+
+  patch.linkMode = "wifi";
+  TEST_ASSERT_NULL(patch.invalidField());
+}
+
+void test_link_mode_patch_denied_outside_setup() {
+  TEST_ASSERT_NULL(settingsLinkModePatchDenied("usb", "", false, true));
+  TEST_ASSERT_NULL(settingsLinkModePatchDenied("wifi", "wifi", true, false));
+  TEST_ASSERT_EQUAL_STRING(
+    "link_mode only in setup",
+    settingsLinkModePatchDenied("usb", "wifi", true, false)
+  );
+  TEST_ASSERT_EQUAL_STRING(
+    "link_mode only in setup",
+    settingsLinkModePatchDenied("wifi", "usb", true, false)
+  );
+  TEST_ASSERT_EQUAL_STRING(
+    "link_mode only in setup",
+    settingsLinkModePatchDenied("wifi", "", false, false)
+  );
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_hostname_rejects_invalid);
@@ -130,11 +228,19 @@ int main() {
   RUN_TEST(test_sleep_timeout);
   RUN_TEST(test_continuous_timeout);
   RUN_TEST(test_volume);
+  RUN_TEST(test_push_button_pin);
+  RUN_TEST(test_push_button_sound_legacy_validate);
   RUN_TEST(test_loading);
+  RUN_TEST(test_eyes_style);
   RUN_TEST(test_access_token);
   RUN_TEST(test_wifi_ssid);
   RUN_TEST(test_wifi_password);
   RUN_TEST(test_servo_ranges);
+  RUN_TEST(test_patch_names_the_first_invalid_field);
+  RUN_TEST(test_patch_names_its_setup_only_step);
   RUN_TEST(test_rgb_order);
+  RUN_TEST(test_link_mode);
+  RUN_TEST(test_link_mode_patch_rejects_empty);
+  RUN_TEST(test_link_mode_patch_denied_outside_setup);
   return UNITY_END();
 }

@@ -1,102 +1,107 @@
 # Getting started
 
-Build the robot end-to-end: parts → print → wire → flash → Wi‑Fi → one animation. Skip ahead if that stage is already done (e.g. robot on Wi‑Fi → jump to [hooks](hooks.md)).
+Canonical build checklist for Tiny Engineer. Each step: open the linked doc, finish the exit criterion, return here. Mechanical joins live in [assembly.md](3d/assembly.md); this page owns overall order.
 
-## What is the ESP32?
+Robot already on Wi-Fi? Jump to [step 8](#8-agent-hooks).
 
-**ESP32** is a family of small Wi‑Fi microcontrollers from Espressif. Tiny Engineer’s “brain” is one of these boards: it runs the firmware, talks over Wi‑Fi (HTTP API), and drives servos, OLED, and audio.
+## Safety
 
-This project uses a **Waveshare ESP32-C3-Zero** (ESP32-C3 chip). Flash and serial go over USB. Radio is **2.4 GHz Wi‑Fi only** (no 5 GHz).
+Read this before you power anything. Optional primer, not a gate: [From Code to Circuits](hardware-for-software-engineers/README.md).
 
-In PlatformIO, `board = esp32-c3-devkitm-1` is a **build target name**, not a different physical module. The real board is still the C3-Zero — same note as in [hardware/components.md](hardware/components.md).
+- Supply **5 V / ≥2 A** on the board USB-C.
+- Speaker: connector **or** solder pads, never both. **SPK− is not ground.**
+- Leave the C3-Zero ceramic antenna clear of metal and dense plastic.
 
-## Happy path
+## Timeline
 
-### 1. Parts
+Shop → print → connect → flash → assemble (one run) → setup wizard → prove → agent hooks.
 
-Gather electronics from [hardware/components.md](hardware/components.md). Minimum set:
+The default build uses the **main control board**. Plug in the ESP32, OLED, servos, and speaker. To add modules the board does not carry, follow the harness rules in [wiring.md](hardware/wiring.md) and mount them with [assembly-modular.md](3d/assembly-modular.md).
 
-- Waveshare ESP32-C3-Zero
-- Adafruit PCA9685 + 5× analog micro servos (**Tower Pro SG90** recommended; [other presets](3d/parametric-design.md))
-- MAX98357A + 8 Ω / 1 W speaker
-- [Waveshare 0.91inch OLED Module](https://www.waveshare.com/0.91inch-oled-module.htm) (SSD1306, 128×32, I2C)
-- Adafruit 5993 USB-C breakout (power + data)
-- **5 V / ≥2 A** USB supply (servos need headroom — [hardware/power.md](hardware/power.md))
+```mermaid
+flowchart LR
+  shop[Shop]
+  print[Print]
+  connect[Connect]
+  flash[Flash]
+  mech[Assemble]
+  wiz[Wizard]
+  prove[Prove]
+  agent[Agent]
 
-### 2. Print and mechanical
+  shop --> print --> connect --> flash --> mech --> wiz --> prove --> agent
+```
 
-Printables and CAD: [3d_models/README.md](../3d_models/README.md) (`parts/{servo_id}/3mf/*.3mf` ready to print PLA/PETG, no supports; source `cad/TinyEngineer.f3d` for edits / different hardware). Parametric servo sizes, Fusion add-in, and export: [3d/parametric-design.md](3d/parametric-design.md). Print [`ServoSizingTester`](../3d_models/README.md#print-first) first and confirm a real servo fits before queuing the rest of the set.
+## Checklist
 
-Join printed parts with **2 mm diameter screws** (no glue; easy to dismount later). Exact screw lengths/counts and a full assembly SOP are **not documented yet** — use the parts table there as the inventory. After print:
+### 1. Shop
 
-- Fit the five servos (head, neck, left/right hand, body) — axes and safe ranges: [robot-movement.md](robot-movement.md)
-- Leave the ESP32 ceramic antenna clear of metal / dense plastic ([hardware/components.md](hardware/components.md))
+- **Open:** **[Shop](https://jamro.github.io/tiny-engineer/shop/)** (checklist) or [shopping.md](shopping.md). Default cart is the main control board plus the ESP32, OLED, servos, and speaker.
+- **Until:** cart in hand — main control board, ESP32, servos, OLED, speaker, M2 screws/nuts, ~7–12 cm male–female jumpers (OLED/servo extensions), **5 V / ≥2 A** supply + **data** USB-C cable, and a print path (filament or a service order). Default servos: **Tower Pro SG90**.
+- **Return** here.
 
-### 3. Wire and power
+### 2. Print or order
 
-Canonical connections: [hardware/wiring.md](hardware/wiring.md) and the diagram [wiring/Tiny Engineer.drawio.png](wiring/Tiny%20Engineer.drawio.png). Overview: [hardware/README.md](hardware/README.md).
+- **Open:** **[Print](https://jamro.github.io/tiny-engineer/print/)** (checklist + downloads for the Shop servo) or [3d_models/README.md](../3d_models/README.md) (home print; testers first) or [3d/order-parts.md](3d/order-parts.md) (no printer).
+- **Until:** printed set for your servo model ready.
+- **Return** here.
 
-Before first power-up, run the assembly checks in wiring.md (common GND, PCA9685 **VCC** = 3.3 V vs **V+** = 5 V not shorted, OLED clock on **SCL**, speaker on **SPK+/SPK−** only). Prefer bench bring-up with a strong 5 V supply before seating everything in the printed shell.
+### 3. Connect
+
+- **Open:** [hardware/main-control-board.md](hardware/main-control-board.md).
+- **Until:** pre-power checks pass (speaker on **SPK+/SPK−** only, one method; servo plugs match the labels; ESP32 orientation matches the PCB USB mark). Electronics stay on the desk.
+- **Advanced:** extra modules the board does not support — wire the harness now ([hardware/wiring.md](hardware/wiring.md)). Mount those boards during assembly ([3d/assembly-modular.md](3d/assembly-modular.md)).
+- **Return** here.
 
 ### 4. Flash
 
-Firmware is Arduino on [PlatformIO](https://platformio.org/) ([pioarduino](https://github.com/pioarduino/platform-espressif32) / Arduino-ESP32 3.x). Board and baud live in `platformio.ini`.
+- **Open:** **[Web flash](https://jamro.github.io/tiny-engineer/flash/)** (Chrome or Edge; USB-C **data** cable). The page starts with a short visual prep (seat the ESP32 on the **main control board**, plug USB into the board — not the module). A bare module alone will not open the setup AP. Pick the latest release → Connect & install. No PlatformIO or repo clone needed for stock firmware. More detail / stuck / advanced: [flash.md](flash.md).
+- **Until:** stock firmware + audio on the board; setup AP **Assembly support** → **Move all to 90°** (or one servo moves). Do not finish the Wi-Fi wizard yet.
+- **Return** here. Keep electronics on the desk — do not seat them in the chest yet.
 
-Install [PlatformIO Core](https://docs.platformio.org/en/latest/core/installation.html) (or the PlatformIO extension). Connect the board over USB (Adafruit 5993 data lines when assembled).
+### 5. Assemble
 
-From the project root:
+- **Open:** [3d/assembly.md](3d/assembly.md) from §1 through §19 (Head/Hat, centering, joins, channels, arms, lamp).
+- **Until:** all joins done; servo and OLED headers plugged per the guide.
+- **Return** here.
 
-```bash
-pio run                 # build
-pio run -t upload       # flash firmware + LittleFS
-pio device monitor      # serial (115200)
-```
+### 6. Setup wizard
 
-After firmware upload, a post-script also uploads **LittleFS** ([`scripts/upload_fs_after_upload.py`](../scripts/upload_fs_after_upload.py)) so WAV assets (`welcome`, `bell`, and friends) land on the board. If animations move but stay silent, run `pio run -t uploadfs` once.
+- **Open:** [3d/assembly.md §20](3d/assembly.md#20-setup-wizard-and-first-boot-on-wi-fi).
+- **Until:** wizard finished, power-cycled, robot on home **2.4 GHz** Wi-Fi.
+- **Return** here.
 
-Several serial ports:
+### 7. Prove it
 
-```bash
-pio device list
-pio run -t upload --upload-port <PORT>
-pio device monitor --port <PORT>
-```
-
-`<PORT>` is the name `pio device list` prints for the board, and it is
-platform-specific: `COM4` on Windows, `/dev/cu.usbmodemXXXX` or
-`/dev/cu.usbserial-XXXX` on macOS, `/dev/ttyACM0` or `/dev/ttyUSB0` on Linux.
-Pick the entry whose hardware ID shows Espressif's `VID:PID=303A:1001` (the
-ESP32-C3's native USB) or your board's USB-serial bridge — `pio device list`
-also lists Bluetooth serial ports, which are not the board.
-
-### 5. Wi‑Fi setup
-
-First boot (or after factory reset + power-cycle): join setup network `TinyEngineer-XXXX`, open `http://192.168.4.1/config`. A five-step wizard: (1) seat printed parts on the servo shafts at 90° then mark each joint’s safe min/max (factory reset keeps prior ranges; you can still change them here), (2) look at the OLED and tap Rotate 180° if text is upside down (factory reset keeps the rotation), (3) tap Red/Green/Blue on the onboard LED; change mapping only if colors look wrong (default **GRB**; factory reset keeps the mapping), (4) play the welcome clip through the speaker, (5) hostname and home Wi‑Fi (**2.4 GHz** only). OLED shows join-AP steps. Wi‑Fi is not editable from the normal Config page later — factory reset to change it.
-
-### 6. Prove it
-
-Open `http://tiny-engineer.local/` (or the IP on the OLED) for the **web UI**: settings, hardware tests, animations. WiFi credentials, servo ranges, RGB LED mapping, and screen rotation stay setup-AP-only (`/config` on `http://192.168.4.1`).
+Open `http://tiny-engineer.local/` (or the IP on the OLED) for the web UI.
 
 ```bash
 curl http://tiny-engineer.local/health
 curl -X POST "http://tiny-engineer.local/anim?name=ring"
 ```
 
-If `.local` is slow or fails, use the OLED IP or `curl -4`. Prefer web UI for hardware tests before seating servos hard against stops. When WiFi is not configured, control APIs (`/anim`, `/test/*`) return **503**; `POST /setup/servo`, `POST /setup/led`, `POST /setup/audio`, and `POST /setup/oled` stay available on the setup AP. Optional access token → `Authorization: Bearer …` on JSON APIs (`GET /auth` stays public) — see [api.md](api.md).
+- **Until:** `/health` OK and `ring` runs (motion; sound if LittleFS uploaded). If `.local` is slow, use the OLED IP or `curl -4`.
+- **Return** here. Full API: [api.md](api.md).
 
-### 7. Optional — Cursor hooks
+### 8. Agent hooks
 
-Robot on the same LAN → [hooks.md](hooks.md). Any IDE / scripts → [integration.md](integration.md). Full HTTP: [api.md](api.md).
+- **Open:** [integration.md](integration.md) — `tiny-engineer setup` (default) or REST for custom agents. Cursor details: [hooks.md](hooks.md).
+- **Until:** optional — an agent event triggers an animation.
+- Done.
 
 ## Stuck?
 
 | Symptom | What to try |
 | --- | --- |
-| Which wires / voltages? | [hardware/wiring.md](hardware/wiring.md), [hardware/pinout.md](hardware/pinout.md) |
+| Extra modules the board does not support? | [shopping.md](shopping.md#advanced-extra-modules) · [hardware/wiring.md](hardware/wiring.md) |
+| What to buy? | [shopping.md](shopping.md) |
+| How to plug in the board? | [hardware/main-control-board.md](hardware/main-control-board.md) |
 | What to print? | [3d_models/README.md](../3d_models/README.md) |
+| How to assemble printed parts? | [3d/assembly.md](3d/assembly.md) |
+| Flash / install stuck | [Web flash](https://jamro.github.io/tiny-engineer/flash/) · [flash.md](flash.md) |
 | `.local` slow or fails | OLED IP; `curl -4 http://…` |
-| OLED shows join AP / `192.168.4.1` | Wi‑Fi not saved or STA failed — finish the setup AP wizard |
-| Welcome / ring silent (servos move) | LittleFS missing WAVs — `pio run -t uploadfs` |
-| Hooks never move the robot | Node 18+, hook `timeout` ≥ 30, HTTPS tarball `npx` — see [hooks.md](hooks.md) |
+| OLED shows join AP / `192.168.4.1` | Wi-Fi not saved or STA failed — finish [assembly §20](3d/assembly.md#20-setup-wizard-and-first-boot-on-wi-fi) |
+| Welcome / ring silent (servos move) | Re-install the same release from [Web flash](https://jamro.github.io/tiny-engineer/flash/) (stock image includes audio). Advanced: [flash.md](flash.md) |
+| Hooks never move the robot | Node 18+, `npx -y tiny-engineer doctor`, hook `timeout` ≥ 30 for cold `npx` — see [integration.md](integration.md) / [hooks.md](hooks.md) |
 | Servos twitch / board resets on motion | Power budget — [hardware/power.md](hardware/power.md) |
 | Other boot / I2C / audio failures | [hardware/testing.md](hardware/testing.md) |

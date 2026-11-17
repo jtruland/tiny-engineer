@@ -1,164 +1,296 @@
 #include "settings/nvs.h"
 
+#include "extensions/pin_claims_settings.h"
 #include "serial_log.h"
-#include "servos.h"
+#include "settings/values.h"
 
 Preferences g_settingsPrefs;
 
-void fillDefaultServoRanges(uint8_t* mins, uint8_t* maxs) {
-  for (size_t i = 0; i < SETTINGS_SERVO_COUNT; i++) {
-    mins[i] = static_cast<uint8_t>(SERVO_SPECS[i].min);
-    maxs[i] = static_cast<uint8_t>(SERVO_SPECS[i].max);
-  }
-}
-
-void packServoRanges(
-  uint8_t* blob,
-  const uint8_t* mins,
-  const uint8_t* maxs
-) {
-  for (size_t i = 0; i < SETTINGS_SERVO_COUNT; i++) {
-    blob[i * 2] = mins[i];
-    blob[i * 2 + 1] = maxs[i];
-  }
-}
-
-void unpackServoRanges(
-  const uint8_t* blob,
-  uint8_t* mins,
-  uint8_t* maxs
-) {
-  for (size_t i = 0; i < SETTINGS_SERVO_COUNT; i++) {
-    mins[i] = blob[i * 2];
-    maxs[i] = blob[i * 2 + 1];
-  }
-}
-
-bool settingsNvsBeginRead() {
-  return g_settingsPrefs.begin(kNs, true);
-}
-
-bool settingsNvsBeginWrite() {
-  return g_settingsPrefs.begin(kNs, false);
-}
-
-void settingsNvsEnd() {
-  g_settingsPrefs.end();
-}
-
-void settingsNvsClear() {
-  g_settingsPrefs.clear();
-}
-
 namespace {
 
-void putAll(
-  uint32_t sleepTimeoutMin,
-  const char* hostname,
-  uint8_t volume,
-  bool welcome,
-  bool serialLog,
-  uint32_t continuousTimeoutMin,
-  const char* loading,
-  const char* accessToken,
-  const char* wifiSsid,
-  const char* wifiPassword,
-  const uint8_t* servoMins,
-  const uint8_t* servoMaxs,
-  const char* rgbOrder,
-  bool oledRotate180
-) {
-  uint8_t servoBlob[kServoRangesLen];
-  packServoRanges(servoBlob, servoMins, servoMaxs);
+// Stored as min,max pairs, one per servo.
+constexpr size_t kServoRangesLen = SETTINGS_SERVO_COUNT * 2;
 
-  g_settingsPrefs.putUInt(kKeySleep, sleepTimeoutMin);
-  g_settingsPrefs.putString(kKeyHost, hostname);
-  g_settingsPrefs.putUInt(kKeyVolume, volume);
-  g_settingsPrefs.putBool(kKeyWelcome, welcome);
-  g_settingsPrefs.putBool(kKeySerialLog, serialLog);
-  g_settingsPrefs.putUInt(kKeyContTo, continuousTimeoutMin);
-  g_settingsPrefs.putString(kKeyLoading, loading);
-  g_settingsPrefs.putString(kKeyAccessTok, accessToken);
-  g_settingsPrefs.putString(kKeyWifiSsid, wifiSsid);
-  g_settingsPrefs.putString(kKeyWifiPass, wifiPassword);
-  g_settingsPrefs.putBytes(kKeyServoRanges, servoBlob, kServoRangesLen);
-  g_settingsPrefs.putString(kKeyRgbOrder, rgbOrder);
-  g_settingsPrefs.putBool(kKeyOledRot, oledRotate180);
+template <size_t N>
+void loadText(char (&dest)[N], const char* key, bool (*valid)(const char*)) {
+  // isKey first: Preferences getString logs ERROR when the key is missing.
+  if (!g_settingsPrefs.isKey(key)) {
+    return;
+  }
+
+  const String value = g_settingsPrefs.getString(key, dest);
+
+  if (valid(value.c_str())) {
+    strlcpy(dest, value.c_str(), sizeof(dest));
+  }
+}
+
+void loadMinutes(uint32_t& dest, const char* key, bool (*valid)(uint32_t)) {
+  if (!g_settingsPrefs.isKey(key)) {
+    return;
+  }
+
+  const uint32_t value = g_settingsPrefs.getUInt(key, dest);
+
+  if (valid(value)) {
+    dest = value;
+  }
 }
 
 }  // namespace
 
-bool writeAllToNvs(
-  uint32_t sleepTimeoutMin,
-  const char* hostname,
-  uint8_t volume,
-  bool welcome,
-  bool serialLog,
-  uint32_t continuousTimeoutMin,
-  const char* loading,
-  const char* accessToken,
-  const char* wifiSsid,
-  const char* wifiPassword,
-  const uint8_t* servoMins,
-  const uint8_t* servoMaxs,
-  const char* rgbOrder,
-  bool oledRotate180
-) {
-  if (!settingsNvsBeginWrite()) {
-    serialLogPrintln("Settings: NVS write open failed");
+void SettingsValues::load() {
+  loadMinutes(sleepTimeoutMin, kKeySleep, settingsValidateSleepTimeout);
+  loadText(hostname, kKeyHost, settingsValidateHostname);
+
+  if (g_settingsPrefs.isKey(kKeyVolume)) {
+    const uint32_t storedVolume = g_settingsPrefs.getUInt(kKeyVolume, volume);
+
+    if (storedVolume <= UINT8_MAX && settingsValidateVolume(storedVolume)) {
+      volume = static_cast<uint8_t>(storedVolume);
+    }
+  }
+
+  if (g_settingsPrefs.isKey(kKeyWelcome)) {
+    welcome = g_settingsPrefs.getBool(kKeyWelcome, welcome);
+  }
+
+  if (g_settingsPrefs.isKey(kKeySerialLog)) {
+    serialLog = g_settingsPrefs.getBool(kKeySerialLog, serialLog);
+  }
+
+  if (g_settingsPrefs.isKey(kKeyPushButton)) {
+    pushButton = g_settingsPrefs.getBool(kKeyPushButton, pushButton);
+  }
+
+  if (g_settingsPrefs.isKey(kKeyPushButtonPin)) {
+    const uint32_t storedPin = g_settingsPrefs.getUInt(kKeyPushButtonPin, pushButtonPin);
+
+    if (storedPin <= UINT8_MAX && settingsValidatePushButtonPin(static_cast<uint8_t>(storedPin))) {
+      pushButtonPin = static_cast<uint8_t>(storedPin);
+    }
+  }
+
+  loadText(pushButtonSoundDown, kKeyBtnSndDn, settingsValidatePushButtonSound);
+  loadText(pushButtonSoundUp, kKeyBtnSndUp, settingsValidatePushButtonSound);
+  loadText(pushButtonSoundClick, kKeyBtnSndClk, settingsValidatePushButtonSound);
+  loadText(pushButtonSoundDoubleClick, kKeyBtnSndDbl, settingsValidatePushButtonSound);
+  loadText(pushButtonSoundLongClick, kKeyBtnSndLng, settingsValidatePushButtonSound);
+
+  loadMinutes(continuousTimeoutMin, kKeyContTo, settingsValidateContinuousTimeout);
+  loadText(loading, kKeyLoading, settingsValidateLoading);
+  loadText(eyesStyle, kKeyEyesStyle, settingsValidateEyesStyle);
+  loadText(accessToken, kKeyAccessTok, settingsValidateAccessToken);
+  loadText(linkMode, kKeyLinkMode, settingsValidateLinkMode);
+
+  if (g_settingsPrefs.isKey(kKeyServoRanges)) {
+    uint8_t blob[kServoRangesLen] = {};
+
+    if (g_settingsPrefs.getBytes(kKeyServoRanges, blob, kServoRangesLen) ==
+        kServoRangesLen) {
+      ServoRanges stored{};
+
+      for (size_t i = 0; i < SETTINGS_SERVO_COUNT; i++) {
+        stored.mins[i] = blob[i * 2];
+        stored.maxs[i] = blob[i * 2 + 1];
+      }
+
+      if (stored.valid()) {
+        servoRanges = stored;
+      }
+    }
+  }
+
+  loadText(rgbOrder, kKeyRgbOrder, settingsValidateRgbOrder);
+
+  if (g_settingsPrefs.isKey(kKeyOledRot)) {
+    oledRotate180 = g_settingsPrefs.getBool(kKeyOledRot, oledRotate180);
+  }
+}
+
+namespace {
+
+bool openForWrite() {
+  if (g_settingsPrefs.begin(kNs, false)) {
+    return true;
+  }
+
+  serialLogPrintln("Settings: NVS write open failed");
+  return false;
+}
+
+// Preferences commits every put on its own, so only keys whose value differs
+// from `before` are written, unless `all` asks for every key.
+bool writeValues(const SettingsValues& values, const SettingsValues& before, bool all) {
+  bool ok = true;
+
+  auto putUInt = [&](const char* key, uint32_t value, uint32_t old) {
+    if (all || value != old) {
+      ok &= g_settingsPrefs.putUInt(key, value) == sizeof(uint32_t);
+    }
+  };
+  auto putBool = [&](const char* key, bool value, bool old) {
+    if (all || value != old) {
+      ok &= g_settingsPrefs.putBool(key, value) == sizeof(uint8_t);
+    }
+  };
+  auto putText = [&](const char* key, const char* value, const char* old) {
+    if (all || strcmp(value, old) != 0) {
+      ok &= g_settingsPrefs.putString(key, value) == strlen(value);
+    }
+  };
+
+  putUInt(kKeySleep, values.sleepTimeoutMin, before.sleepTimeoutMin);
+  putText(kKeyHost, values.hostname, before.hostname);
+  putUInt(kKeyVolume, values.volume, before.volume);
+  putBool(kKeyWelcome, values.welcome, before.welcome);
+  putBool(kKeySerialLog, values.serialLog, before.serialLog);
+  putBool(kKeyPushButton, values.pushButton, before.pushButton);
+  putUInt(kKeyPushButtonPin, values.pushButtonPin, before.pushButtonPin);
+  putUInt(kKeyContTo, values.continuousTimeoutMin, before.continuousTimeoutMin);
+  putText(kKeyLoading, values.loading, before.loading);
+  putText(kKeyEyesStyle, values.eyesStyle, before.eyesStyle);
+  putText(kKeyAccessTok, values.accessToken, before.accessToken);
+  putText(kKeyLinkMode, values.linkMode, before.linkMode);
+  putText(kKeyRgbOrder, values.rgbOrder, before.rgbOrder);
+  putBool(kKeyOledRot, values.oledRotate180, before.oledRotate180);
+
+  if (all || memcmp(&values.servoRanges, &before.servoRanges, sizeof(ServoRanges)) != 0) {
+    uint8_t blob[kServoRangesLen];
+
+    for (size_t i = 0; i < SETTINGS_SERVO_COUNT; i++) {
+      blob[i * 2] = values.servoRanges.mins[i];
+      blob[i * 2 + 1] = values.servoRanges.maxs[i];
+    }
+
+    ok &= g_settingsPrefs.putBytes(kKeyServoRanges, blob, kServoRangesLen) == kServoRangesLen;
+  }
+
+  return ok;
+}
+
+}  // namespace
+
+bool SettingsValues::save(const SettingsValues& saved) const {
+  if (!openForWrite()) {
     return false;
   }
 
-  putAll(
-    sleepTimeoutMin,
-    hostname,
-    volume,
-    welcome,
-    serialLog,
-    continuousTimeoutMin,
-    loading,
-    accessToken,
-    wifiSsid,
-    wifiPassword,
-    servoMins,
-    servoMaxs,
-    rgbOrder,
-    oledRotate180
-  );
-  settingsNvsEnd();
+  const bool ok = writeValues(*this, saved, false);
+  g_settingsPrefs.end();
+  return ok;
+}
+
+bool SettingsValues::replaceAll() const {
+  if (!openForWrite()) {
+    return false;
+  }
+
+  g_settingsPrefs.clear();
+  const bool ok = writeValues(*this, *this, true);
+  g_settingsPrefs.end();
+  return ok;
+}
+
+bool settingsWouldPinConflict(
+  const SettingsPatch& patch,
+  char* message,
+  size_t messageLen
+) {
+  SettingsValues proposed = g_settings;
+  proposed.apply(patch);
+  return settingsPinClaimConflict(proposed, message, messageLen);
+}
+
+bool saveSettings(const SettingsPatch& patch) {
+  if (patch.invalidField() != nullptr) {
+    return false;
+  }
+
+  SettingsValues next = g_settings;
+  next.apply(patch);
+
+  if (settingsPinClaimConflict(next)) {
+    return false;
+  }
+
+  if (!next.save(g_settings)) {
+    return false;
+  }
+
+  g_settings = next;
+  g_settings.log("Settings saved:");
   return true;
 }
 
-void settingsNvsPutAll(
-  uint32_t sleepTimeoutMin,
-  const char* hostname,
-  uint8_t volume,
-  bool welcome,
-  bool serialLog,
-  uint32_t continuousTimeoutMin,
-  const char* loading,
-  const char* accessToken,
-  const char* wifiSsid,
-  const char* wifiPassword,
-  const uint8_t* servoMins,
-  const uint8_t* servoMaxs,
-  const char* rgbOrder,
-  bool oledRotate180
-) {
-  putAll(
-    sleepTimeoutMin,
-    hostname,
-    volume,
-    welcome,
-    serialLog,
-    continuousTimeoutMin,
-    loading,
-    accessToken,
-    wifiSsid,
-    wifiPassword,
-    servoMins,
-    servoMaxs,
-    rgbOrder,
-    oledRotate180
-  );
+bool saveWifiNetworks(const WifiNetworkList& networks) {
+  if (!openForWrite()) {
+    return false;
+  }
+
+  const size_t length = networks.count() * sizeof(WifiNetwork);
+  // Preferences writes nothing for an empty blob, so an empty list removes the key.
+  const bool written = length == 0
+    ? !g_settingsPrefs.isKey(kKeyWifiNets) || g_settingsPrefs.remove(kKeyWifiNets)
+    : g_settingsPrefs.putBytes(kKeyWifiNets, networks.data(), length) == length;
+
+  g_settingsPrefs.end();
+
+  if (!written) {
+    serialLogPrintln("Settings: WiFi networks write failed");
+    return false;
+  }
+
+  g_wifiNetworks = networks;
+  g_wifiChangedSinceBoot = true;
+  g_settings.log("Settings saved:");
+  return true;
+}
+
+bool saveActions(const ActionList& actions) {
+  if (!openForWrite()) {
+    return false;
+  }
+
+  const size_t length = actions.count() * sizeof(ActionEntry);
+  const bool written = length == 0
+    ? !g_settingsPrefs.isKey(kKeyActions) || g_settingsPrefs.remove(kKeyActions)
+    : g_settingsPrefs.putBytes(kKeyActions, actions.data(), length) == length;
+
+  g_settingsPrefs.end();
+
+  if (!written) {
+    serialLogPrintln("Settings: Actions write failed");
+    return false;
+  }
+
+  g_actions = actions;
+  g_settings.log("Settings saved:");
+  return true;
+}
+
+bool factoryResetSettings() {
+  // The hardware calibration survives a reset.
+  SettingsValues next = SettingsValues::defaults();
+  next.servoRanges = g_settings.servoRanges;
+  strlcpy(next.rgbOrder, g_settings.rgbOrder, sizeof(next.rgbOrder));
+  next.oledRotate180 = g_settings.oledRotate180;
+
+  if (!next.replaceAll()) {
+    serialLogPrintln("Settings: factory reset failed");
+    return false;
+  }
+
+  g_settings = next;
+  g_wifiChangedSinceBoot |= g_wifiNetworks.count() > 0;
+  g_wifiNetworks.clear();
+  g_actions.clear();
+  g_settings.log("Settings factory reset:");
+  return true;
+}
+
+bool settingsRebootRequired() {
+  return strcmp(g_settings.hostname, g_bootSettings.hostname) != 0 ||
+         strcmp(g_settings.loading, g_bootSettings.loading) != 0 ||
+         g_wifiChangedSinceBoot;
 }

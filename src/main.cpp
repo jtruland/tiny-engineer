@@ -3,8 +3,10 @@
 #include <ESP_I2S.h>
 
 #include "pins.h"
+#include "firmware_version.h"
 #include "hardware/rgb.h"
 #include "hardware/chip_temp.h"
+#include "hardware/i2c_health.h"
 #include "display/oled.h"
 #include "audio/audio.h"
 #include "animation.h"
@@ -13,10 +15,14 @@
 #include "hardware/pca9685_servos.h"
 #include "hardware/servo_wrapper.h"
 #include "network/wifi_connect.h"
-#include "http/http_server.h"
+#include "network/ota.h"
+#include "extensions/push_button.h"
+#include "http/server.h"
 #include "settings/settings.h"
+#include "serial/link.h"
 #include "serial_log.h"
 #include "sleep.h"
+#include "robot_tick.h"
 #include "boot/boot_loading.h"
 
 namespace {
@@ -28,17 +34,24 @@ constexpr int kBootSteps = 6;
 void setup() {
   initServoOutputPin();
 
+  // HWCDC defaults RX/TX to 256; stream DATA frames are ~1 KB COBS and overrun
+  // the queue before serialLinkPoll drains → silent credit timeout on play.
+  Serial.setRxBufferSize(4096);
+  Serial.setTxBufferSize(4096);
   Serial.begin(115200);
   Serial.setTxTimeoutMs(0);
+  serialLinkWatchUsb();
   delay(1000);
 
   initSettings();
+  pushButtonApplyFromSettings();
 
   initChipTemp();
 
   serialLogPrintln();
   serialLogPrintln("==========================");
   serialLogPrintln("TINY ENGINEER");
+  serialLogPrintln(FW_VERSION);
   serialLogPrintln("==========================");
 
   setRgb(0, 32, 0);
@@ -48,16 +61,15 @@ void setup() {
   serialLogPrintln("SDA = GP0");
   serialLogPrintln("SCL = GP1");
 
-  Wire.begin(
-    I2C_SDA,
-    I2C_SCL
-  );
+  initI2cBus();
 
   delay(100);
 
   initPca9685();
 
   initOled();
+
+  beginI2cHealth();
 
   const bool sleepServos = bootSleepInertiaUsesServos();
 
@@ -108,7 +120,7 @@ void setup() {
       "Init failed"
     );
 
-    haltWithRgbCode(RGB_CODE_I2S);
+    haltWithRgbCode(RGB_CODE_I2S, "I2S / MAX98357A init failed");
   }
 
   serialLogPrintln("I2S OK");
@@ -127,9 +139,7 @@ void setup() {
     if (wifiProvisioningMode()) {
       showProvisioningOled("Join this WiFi", wifiApSsid());
     } else {
-      showBootIp(wifiConnected() ? wifiIpText() : "");
-      delay(3000);
-      showIdleScreen();
+      showBootIpThenIdle(wifiConnected() ? wifiIpText() : "");
     }
   } else {
     bootRunSleepInertia();
@@ -147,25 +157,28 @@ void setup() {
     setAnimation(AnimationId::Welcome);
   } else if (wifiConnected() && !settingsWelcomeEnabled()) {
     anim::parkHands(anim::TRANSITION_HAND_SPEED_DEG_S);
+    setRgbForAnimation(AnimationId::None, millis());
   } else if (wifiProvisioningMode()) {
     setRgb(0, 0, 64);
   } else {
     setRgbForAnimation(AnimationId::None, millis());
   }
 
+  // Wi-Fi mode (or setup AP) starts HTTP; USB-only skips it.
   if (wifiConnected() || wifiProvisioningMode()) {
     startHttpServer();
+  }
+
+  if (wifiConnected()) {
+    startOta();
   }
   initSleep();
 }
 
 void loop() {
-  const uint32_t now = millis();
-  pollWifi();
+  serialLinkPoll();
+  pushButtonPoll();
   pollHttpServer();
-  updateProvisioningOled(now);
-  updateAnimation();
-  // After HTTP/anim so idle timestamp from this frame is not compared to a stale `now`.
-  updateSleep(millis());
-  updateRgb(now);
+  pollOta();
+  tickRobot();
 }

@@ -27,16 +27,24 @@ const EVENT_ANIM = {
   afterAgentThought: "thinking",
   preCompact: "thinking",
   beforeShellExecution: "typing",
+  afterShellExecution: "typing",
+  beforeMCPExecution: "typing",
+  afterMCPExecution: "typing",
   subagentStart: "typing",
   afterFileEdit: "typing",
+  // Cursor fires this often on non-errors (timeouts, cancelled tools, etc.).
+  postToolUseFailure: "none",
 };
 
 /**
  * Map a Cursor hook payload to an animation name, or null to skip.
- * @param {{ hook_event_name?: string, tool_name?: string, status?: string }} event
+ * Empty conversation_id or generation_id skips the pose (missing IDs still map).
+ * @param {{ hook_event_name?: string, tool_name?: string, status?: string, conversation_id?: string, generation_id?: string }} event
  * @returns {string | null}
  */
 export function animationForEvent(event) {
+  if (event?.conversation_id === "" || event?.generation_id === "") return null;
+
   const name = event?.hook_event_name;
   if (!name) return null;
 

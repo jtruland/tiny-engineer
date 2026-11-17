@@ -17,9 +17,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
       - uses: actions/cache@v4
         with:
           path: |
@@ -31,8 +38,33 @@ jobs:
             ${{ runner.os }}-pio-
       - name: Install PlatformIO
         run: pip install -U platformio
+      - name: Audio pack tests
+        run: python3 scripts/test_audio_pack.py
+      - name: PCBA host tests
+        run: python3 scripts/test_pcba_test.py
+      - name: PCBA web tests
+        run: node scripts/test_pcba_web.mjs
+      - name: Laptop screen inserts PDF up to date
+        run: python3 scripts/laptop_screens.py --check
       - name: Build firmware
         run: pio run
+      - name: Build LittleFS image
+        run: pio run -t buildfs
+      - name: Upload firmware binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ github.sha }}
+          path: |
+            .pio/build/esp32-c3-devkitm-1/bootloader.bin
+            .pio/build/esp32-c3-devkitm-1/partitions.bin
+            .pio/build/esp32-c3-devkitm-1/firmware.bin
+            .pio/build/esp32-c3-devkitm-1/littlefs.bin
+          retention-days: 90
+          if-no-files-found: error
+      - name: Build OLED expression demo
+        run: pio run -e expression-demo
+      - name: Build PCBA test image
+        run: pio run -e pcba-test
       - name: Host Unity tests
         run: pio test -e native
 
@@ -42,10 +74,160 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            ui/package-lock.json
+            packages/tiny-engineer-cli/package-lock.json
+      - name: Check OLED expression assets
+        run: |
+          node scripts/expressions/generate.js --check
+          node scripts/expressions/test-assets.js
+      - name: Lint and test web UI
+        run: |
+          npm ci --prefix ui
+          npm run lint --prefix ui
+          npm test --prefix ui
+      - name: Unified CLI package tests
+        run: |
+          npm ci --prefix packages/tiny-engineer-cli
+          npm test --prefix packages/tiny-engineer-cli
       - name: Cursor package tests
         run: npm test --prefix packages/tiny-engineer-cursor
       - name: Antigravity package tests
         run: npm test --prefix packages/tiny-engineer-antigravity
       - name: Claude Code package tests
         run: npm test --prefix packages/tiny-engineer-claude-code
+
+  assembly:
+    # The 3D assembly viewer's SG90 model: read part placements from the Fusion
+    # design, check them against the exported STLs, check the build steps and
+    # joint poses for clipping, and pack the GLB.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: scripts/assembly/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install extractor
+        run: pip install -r scripts/assembly/requirements.txt
+      - name: Extractor and GLB tests
+        run: |
+          python3 scripts/assembly/test_assembly.py
+          node scripts/assembly/test_build_glb.mjs
+          node scripts/assembly/test_viewer.mjs
+          node scripts/assembly/test_clipping.mjs
+          python3 scripts/assembly/test_fasteners.py
+          python3 scripts/assembly/test_boards.py
+      - name: Build assembly model (SG90), check steps and poses
+        run: scripts/assembly/build.sh artifacts/assembly/models
+      - name: Upload assembly model
+        uses: actions/upload-artifact@v4
+        with:
+          name: assembly-${{ github.sha }}
+          path: |
+            artifacts/assembly/*/assembly.json
+            artifacts/assembly/models/*.glb
+          retention-days: 30
+          if-no-files-found: error
+
+  pcb:
+    runs-on: ubuntu-24.04
+    env:
+      # Official lite AppImage (no 3D libs). Bump when project moves past 10.0.7.
+      KICAD_APPIMAGE_VERSION: "10.0.7"
+      KICAD_ROOT: /home/runner/kicad-appimage
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache KiCad AppImage extract
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.KICAD_ROOT }}
+          key: kicad-lite-appimage-${{ env.KICAD_APPIMAGE_VERSION }}-v1
+      - name: Install KiCad 10
+        run: |
+          set -euo pipefail
+          # Avoid Launchpad PPAs (flaky 503 / timeouts → Ubuntu KiCad 7 with no sch erc).
+          # Official lite AppImage from KiCad mirrors is enough for kicad-cli ERC/DRC/netlist.
+          VER="${KICAD_APPIMAGE_VERSION}"
+          DEST="${KICAD_ROOT}/${VER}"
+          ARCHIVE="kicad-${VER}-x86_64-lite.AppImage.tar"
+          CLI=""
+          if [ -x "${DEST}/usr/bin/kicad-cli" ]; then
+            CLI="${DEST}/usr/bin/kicad-cli"
+          elif [ -x "${DEST}/bin/kicad-cli" ]; then
+            CLI="${DEST}/bin/kicad-cli"
+          fi
+          if [ -z "${CLI}" ]; then
+            tmp=$(mktemp -d)
+            trap 'rm -rf "${tmp}"' EXIT
+            cd "${tmp}"
+            urls=(
+              "https://kicad-downloads.s3.cern.ch/appimage/stable/${ARCHIVE}"
+              "https://mirrors.mit.edu/kicad/appimage/stable/${ARCHIVE}"
+              "https://downloads.kicad.org/kicad/linux/explore/stable/download/${ARCHIVE}"
+            )
+            downloaded=0
+            for url in "${urls[@]}"; do
+              echo "Downloading ${url}"
+              if curl -fL --retry 5 --retry-all-errors --retry-delay 10 \
+                  --connect-timeout 30 --max-time 900 -o "${ARCHIVE}" "${url}"; then
+                downloaded=1
+                break
+              fi
+              echo "download failed; trying next mirror…"
+            done
+            if [ "${downloaded}" -ne 1 ]; then
+              echo "error: could not download KiCad ${VER} lite AppImage from any mirror"
+              exit 1
+            fi
+            tar -xf "${ARCHIVE}"
+            appimage=$(echo kicad-*-x86_64-lite.AppImage)
+            chmod +x "${appimage}"
+            "./${appimage}" --appimage-extract
+            root=""
+            if [ -d AppDir ]; then
+              root=AppDir
+            elif [ -d squashfs-root ]; then
+              root=squashfs-root
+            else
+              echo "error: AppImage extract produced neither AppDir nor squashfs-root"
+              ls -la
+              exit 1
+            fi
+            mkdir -p "${KICAD_ROOT}"
+            rm -rf "${DEST}"
+            mv "${root}" "${DEST}"
+            if [ -x "${DEST}/usr/bin/kicad-cli" ]; then
+              CLI="${DEST}/usr/bin/kicad-cli"
+            elif [ -x "${DEST}/bin/kicad-cli" ]; then
+              CLI="${DEST}/bin/kicad-cli"
+            else
+              echo "error: kicad-cli not found under ${DEST}"
+              find "${DEST}" -name kicad-cli 2>/dev/null | head
+              exit 1
+            fi
+          fi
+          echo "KICAD_CLI=${CLI}" >> "${GITHUB_ENV}"
+          echo "Installed: ${CLI}"
+          out=$("${CLI}" version)
+          echo "kicad-cli version: ${out}"
+          case "${out}" in
+            10.*) ;;
+            *)
+              echo "error: need KiCad 10.x, got ${out}"
+              exit 1
+              ;;
+          esac
+      - name: ERC / DRC / expected-nets
+        run: python3 scripts/check_pcb.py --report-dir artifacts/pcb
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: pcb-reports
+          path: artifacts/pcb/

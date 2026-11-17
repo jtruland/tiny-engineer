@@ -74,7 +74,7 @@ Two layers of limits:
 
 Always respect **safe ranges** for the assembled robot — [robot-movement.md](../robot-movement.md). `POST /test/movement` sweeps each joint inside its saved min/max; don't slam full electrical range into a built shell.
 
-**Tune after assembly:** if a hand hits the desk at 135°, lower that joint’s max in the setup AP wizard (saved to NVS) or reorient the horn — don't "just command less" in one script and forget. Stock defaults live in `SERVO_SPECS`; assembled motion uses the saved min/max.
+**Tune after assembly:** stock defaults are a narrow 80°–100° band; widen per joint in the setup AP guided calibration (saved to NVS) or reorient the horn — don't "just command less" in one script and forget. Stock defaults live in `SERVO_SPECS`; assembled motion uses the saved min/max.
 
 ---
 
@@ -120,7 +120,7 @@ flowchart LR
 
 ### Left vs right hand — inverted scale
 
-The left and right hand servos mirror each other physically. Firmware uses **opposite angle mapping**: on the left, higher angle = up; on the right, higher angle = down. Rest pose for "typing" uses left at max, right at min.
+The left and right hand servos mirror each other physically. Firmware uses **opposite angle mapping**: on the left, higher angle = down; on the right, higher angle = up. Rest pose for "typing" uses left at max, right at min (both over the keyboard).
 
 Symmetric code, asymmetric hardware — normal in robots.
 
@@ -134,15 +134,16 @@ No PCA9685 at `0x40` → init fails, red LED, hang. Unlike the OLED. Plan bring-
 
 ---
 
-## Bench testing before closing the shell
+## Safe-range checks during assembly
 
-1. Mount one servo in loose fixture or hand-hold (careful — pinching)
-2. Flash firmware, verify serial shows PCA9685 OK
-3. Command one joint via web UI or `/test/servo`
-4. Sweep through **safe range** slowly — watch for binding
-5. Repeat for all five before screwing into final plastic
+Do this after wire/flash, on the desk, and while centering joints ([assembly.md](../3d/assembly.md)) — before final screws jam a horn against plastic:
 
-Mechanical integration last. Software can clamp angles; it can't un-strip a gear.
+1. After wire/flash, keep electronics on the desk; confirm serial shows PCA9685 OK
+2. Command one joint via setup AP **Assembly → Move all to 90°**, web UI, or `/test/servo`
+3. Seat each printed part on a centered shaft; sweep the **safe range** slowly — watch for binding
+4. Unplug between awkward joins; reconnect channels when the guide says so
+
+Software can clamp angles; it can't un-strip a gear. Don't wait until the chest is closed to discover a stall.
 
 ---
 

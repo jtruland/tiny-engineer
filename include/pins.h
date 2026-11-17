@@ -15,18 +15,23 @@ constexpr int I2S_BCLK = 2;  // GP2
 constexpr int I2S_LRC  = 3;  // GP3
 constexpr int I2S_DIN  = 4;  // GP4
 
+// Default Extension-port GPIO for the push-button extension (settings `push_button_pin`).
+constexpr int PUSH_BUTTON_PIN_DEFAULT = 20;  // GP20
+
 // Built-in WS2812 RGB
 constexpr int RGB_LED_PIN = 10;
 
-// PCA9685 output enable (active LOW). Optional: wire OE → GP5.
-constexpr bool PCA9685_OE_WIRED = false;
+// PCA9685 output enable (active LOW). GP5 → OE; default on.
+// Set PCA9685_OE_WIRED false only if OE is hard-tied off-chip (e.g. to GND).
+constexpr bool PCA9685_OE_WIRED = true;
 constexpr int PCA9685_OE_PIN = 5;
 
 // =====================================================
 // AUDIO
 // =====================================================
 
-constexpr int SAMPLE_RATE = 44100;
+// assets/ ships 44100 Hz WAVs; scripts/audio_pack.py halves them while packing LittleFS.
+constexpr int SAMPLE_RATE = 22050;
 
 // =====================================================
 // PCA9685 / SERVOS

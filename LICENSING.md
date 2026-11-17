@@ -24,17 +24,20 @@ Mechanical CAD, printable manufacturing outputs, and PCB sources are licensed un
 | --- | --- |
 | `3d_models/cad/` | Source CAD (`.f3d`) |
 | `3d_models/parts/` | Printable part exports (`.3mf`) |
+| `mods/*/3d_models/cad/`, `mods/*/3d_models/parts/` | Mod CAD and manufacturing exports |
 | `hardware/boards/` | KiCad PCB projects |
 
 Commercial use of these hardware designs is allowed. If you modify and distribute Products based on these designs, the reciprocal provisions of CERN-OHL-S-2.0 require that you make the corresponding Complete Source available under the same license. See [3d_models/LICENSE](3d_models/LICENSE), [3d_models/NOTICE](3d_models/NOTICE), [hardware/LICENSE](hardware/LICENSE), and [hardware/NOTICE](hardware/NOTICE) for copyright, warranty disclaimer, and Source Location details.
 
-Documentation in `3d_models/README.md` and `hardware/README.md` is software documentation and remains under the MIT License.
+Documentation in `3d_models/README.md`, `mods/README.md`, and `hardware/README.md` is software documentation and remains under the MIT License. Other files beside a mod’s `3d_models/` folder are MIT as well.
 
 ### Source Location
 
 Canonical mechanical design source:
 
 `https://github.com/jamro/tiny-engineer/tree/main/3d_models`
+
+Optional mod CAD and exports use that mod’s `3d_models` tree (for example `https://github.com/jamro/tiny-engineer/tree/main/mods/halloween/3d_models`).
 
 Canonical PCB design source:
 

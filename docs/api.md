@@ -1,22 +1,68 @@
 # HTTP API
 
-JSON HTTP server on the ESP32-C3. Source: [`src/http/http_server.cpp`](../src/http/http_server.cpp) and handlers under [`src/http/`](../src/http/), test routes in [`src/http/test_handlers.cpp`](../src/http/test_handlers.cpp).
+JSON HTTP server on the ESP32-C3. Source: [`src/http/`](../src/http/). Every route and its access rule is listed in [`src/http/routes.cpp`](../src/http/routes.cpp).
 
 Listens on **port 80** after STA Wi-Fi connects, or during setup AP mode at `http://192.168.4.1/`. Base URL is the board IP (OLED / serial) or `http://tiny-engineer.local` (mDNS, 2.4 GHz only).
 
-Optional auth: when an `access_token` is configured in settings, all JSON API routes require `Authorization: Bearer <token>`. Empty token (default) means no auth. `GET /auth` is always public and reports whether auth is required. Missing/wrong token → **401** `{"ok":false,"error":"unauthorized"}`. HTML panel routes stay public (the UI prompts for the token). `Content-Type: application/json`. CORS: `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Headers: Authorization`.
+Outbound events (device → host) use a separate WebSocket on **port 81** at path `/events` while this HTTP server is running, and the same JSON on USB serial as `Evt` frames. See [Outbound events](#outbound-events).
 
-When WiFi credentials are not saved yet, control APIs (`/anim`, `/test/*`) return **503** `{"ok":false,"error":"wifi not configured"}`. Setup routes (`/`, `/config`, `/auth`, `/health`, `/settings`, `/setup/servo`, `/setup/led`, `/setup/audio`, `/setup/oled`) stay available on the setup AP.
+Optional auth: when an `access_token` is configured in settings, all JSON API routes require `Authorization: Bearer <token>`. Empty token (default) means no auth. `GET /auth` is always public and reports whether auth is required. Missing/wrong token → **401** `{"ok":false,"error":"unauthorized"}`. HTML panel routes stay public (the UI prompts for the token). Replies are `Content-Type: application/json`. Routes that take parameters (except `POST /anim` and `/play`) read a JSON object body sent with `Content-Type: application/json`; query parameters or form fields on those routes → **400** `send a JSON body with Content-Type: application/json`, and a body that is not a JSON object → **400** `body must be a JSON object`. CORS: requests with an `Origin` header get `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Headers: Authorization, Content-Type` and `Access-Control-Allow-Methods: GET, POST, PUT, OPTIONS`; a preflight `OPTIONS` gets **200**.
 
-If boot WiFi credentials are missing, the device opens setup AP mode (`TinyEngineer-XXXX`) and serves a five-step setup wizard at `/config` (servo calibration, OLED orientation, RGB LED, speaker test, then Wi-Fi). If saved credentials fail, it reopens setup AP mode. Hardware tests: [`docs/hardware/testing.md`](hardware/testing.md). How to wire this API into AI tools: [`integration.md`](integration.md).
+When the robot is not yet provisioned (no connection mode chosen), control APIs (`/anim`, `/test/*`, `/play`) return **503** `{"ok":false,"error":"not provisioned"}`. Setup routes (`/`, `/config`, `/auth`, `/health`, `/settings`, `/setup/servo`, `/setup/led`, `/setup/audio`, `/setup/oled`, `/servos/park`) stay available on the setup AP. Connection mode is `wifi` or `usb` (`link_mode` in settings/auth/health). USB-only mode disables Wi‑Fi station and the HTTP API after reboot; control then uses the USB serial protocol ([serial.md](serial.md)).
+
+If boot WiFi credentials are missing, the device opens setup AP mode (`TinyEngineer-XXXX`) and serves a five-step setup wizard at `/config` (servo hub: guided calibration / skip / assembly centering, then OLED orientation, RGB LED, speaker test, then connection). If saved credentials fail, it reopens setup AP mode. The setup AP acts as a captive portal: DHCP sends the portal URL (option 114) and DNS answers every name with the AP IP, so a phone that joins the network opens the wizard on its own. Hardware tests: [`docs/hardware/testing.md`](hardware/testing.md). How to wire this API into AI tools: [`integration.md`](integration.md).
 
 Firmware answers mDNS A and AAAA (IPv6 link-local) so macOS does not wait 2–3s on a missing AAAA. If a client still pauses on the hostname, force IPv4 (`curl -4`). The IP on the OLED skips DNS entirely.
+
+## Outbound events
+
+The default build does not emit events. The WebSocket and serial paths stay up so an extension or a mod can publish. The only built-in producer is the push-button extension, off until `push_button` is enabled. Mods such as the [bell button](../mods/bell_button/README.md) use that extension.
+
+Producers publish a versioned JSON envelope to every connected WebSocket client and as one serial `Evt` frame. REST stays inbound-only; WebSocket client payloads are ignored. There is no replay of past events. Binary WebSocket frames are reserved for later audio streaming and are not sent yet.
+
+```json
+{"v":1,"type":"button.down","source":"push-button","ms":123456}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `v` | Envelope version; currently **1** |
+| `type` | Event name (e.g. `button.down`, `button.up`, `button.click`) |
+| `source` | Producer id (e.g. `push-button`) |
+| `ms` | `millis()` since boot |
+
+Push-button producer (`source` `push-button`) publishes:
+
+| `type` | When |
+| --- | --- |
+| `button.down` / `button.up` | Immediate on debounced press / release |
+| `button.click` | **350 ms** after a short release if no second press in that window |
+| `button.double_click` | Second short press whose down falls within 350 ms of the first short up (no `button.click` for that pair) |
+| `button.long_click` | Still held after **800 ms**; later release is `button.up` only (no click / double_click) |
+
+### WebSocket `ws://<host>:81/events`
+
+Starts and stops with the HTTP server (Wi‑Fi or setup AP). USB-only mode does not listen. Cap is **4** clients. The device has **no TLS** on port 81 — use `ws://` from an `http:` robot base URL only. `tiny-engineer watch` rejects `https:` bases (no `wss://` and no plain `ws://` fallback).
+
+When an access token is set, append `?token=<access_token>` (same secret as Bearer). When no token is configured, connect without a query. The device does not log the token. Setting or rotating a non-empty `access_token` disconnects current WebSocket subscribers; they must reconnect with the new `?token=…`. Clearing the token does not disconnect.
+
+```bash
+websocat "ws://tiny-engineer.local:81/events"
+# with auth:
+websocat "ws://tiny-engineer.local:81/events?token=YOUR_TOKEN"
+```
+
+### Serial `Evt` frames
+
+Same JSON payload as the WebSocket text frame, packed as a typed serial message (`Evt`). No Bearer. Best-effort: if the CDC transmit buffer cannot take the frame, that serial copy is dropped and WebSocket delivery is unaffected. See [serial.md](serial.md).
+
+CLI: `tiny-engineer watch` (`http:` base → WebSocket; `--transport serial` → `Evt` frames).
 
 ## Endpoints
 
 ### `GET /`
 
-HTML endpoint index. Lists all routes plus supported parameters for `/anim`, `/settings`, `/test/servo`, `/setup/servo`, `/setup/led`, `/setup/audio`, and `/setup/oled`. Safe, no hardware side effects. Always public (no Bearer required).
+HTML endpoint index. Lists all routes plus supported parameters for `/anim`, `/settings`, `/test/servo`, `/setup/servo`, `/setup/led`, `/setup/audio`, `/setup/oled`, and `/servos/park`. Safe, no hardware side effects. Always public (no Bearer required).
 
 Open in a browser:
 
@@ -24,7 +70,7 @@ Open in a browser:
 curl http://tiny-engineer.local/
 ```
 
-Returns `Content-Type: text/html; charset=utf-8`.
+Returns `Content-Type: text/html; charset=utf-8`, gzip-encoded. The page is built from [`ui/`](../ui/) with Vite and embedded in the firmware, so it always matches the API the firmware serves.
 
 ### `GET /auth`
 
@@ -35,14 +81,16 @@ curl http://tiny-engineer.local/auth
 ```
 
 ```json
-{ "ok": true, "required": false, "wifi_configured": true, "provisioning": false }
+{ "ok": true, "version": "v0.3.0", "required": false, "wifi_configured": true, "link_mode": "wifi", "provisioning": false }
 ```
 
 | Field | Meaning |
 | --- | --- |
 | `ok` | Always `true` on this route |
+| `version` | Firmware version, same as `GET /health` |
 | `required` | `true` when a non-empty access token is configured |
 | `wifi_configured` | `true` when WiFi credentials are saved in NVS |
+| `link_mode` | `""` unprovisioned, `"wifi"`, or `"usb"` |
 | `provisioning` | `true` when the setup AP is active |
 
 ### `GET /health`
@@ -57,6 +105,7 @@ curl -H "Authorization: Bearer YOUR_TOKEN" http://tiny-engineer.local/health
 ```json
 {
   "ok": true,
+  "version": "v0.1.0-82-g7c79b83",
   "uptime_ms": 12345,
   "free_heap": 120000,
   "heap_size": 320000,
@@ -71,13 +120,19 @@ curl -H "Authorization: Bearer YOUR_TOKEN" http://tiny-engineer.local/health
   "provisioning": false,
   "setup_ap_ssid": "",
   "setup_ap_ip": "",
-  "oled": true
+  "oled": true,
+  "i2c": {
+    "ok": true,
+    "pca9685": { "ok": true, "faults": 0, "recoveries": 0, "last_fault_ms": 0 },
+    "oled": { "ok": true, "faults": 0, "recoveries": 0, "last_fault_ms": 0 }
+  }
 }
 ```
 
 | Field | Meaning |
 | --- | --- |
 | `ok` | Always `true` on this route |
+| `version` | Firmware build string from `git describe` at compile time (`v0.1.0` on a tagged release, `v0.1.0-<n>-g<sha>[-dirty]` for a dev build, or `unknown`) |
 | `uptime_ms` | `millis()` since boot |
 | `free_heap` | `ESP.getFreeHeap()` — bytes available for allocation |
 | `heap_size` | `ESP.getHeapSize()` — total heap bytes; usage % = `(1 - free_heap / heap_size) × 100` |
@@ -90,7 +145,13 @@ curl -H "Authorization: Bearer YOUR_TOKEN" http://tiny-engineer.local/health
 | `provisioning` | `true` when setup AP mode is active |
 | `setup_ap_ssid` | Setup AP SSID when `provisioning` is true, else `""` |
 | `setup_ap_ip` | Setup AP IP when `provisioning` is true (usually `192.168.4.1`), else `""` |
-| `oled` | SSD1306 probed and initialized |
+| `oled` | SSD1306 probed and initialized. Goes `false` while an I2C fault keeps the display unreachable |
+| `i2c.ok` | `false` while either chip on the shared I2C bus cannot be used. The firmware checks each every 500 ms and sets a faulted chip up again, retrying with a growing delay (1 s up to 30 s) |
+| `i2c.pca9685.ok` | Servo driver usable: reachable, holding its setup (awake, internal clock, auto-increment, output mode, prescale), and its last write succeeded. Goes `false` at the first failed servo write; servo writes and outputs stay off until the chip is set up again |
+| `i2c.oled.ok` | Same value as `oled`. Stays `false`, with zero counts, on a robot that booted without a display |
+| `i2c.<chip>.faults` | Faults on that chip since boot. A bus fault that takes both chips down counts once on each |
+| `i2c.<chip>.recoveries` | Faults on that chip the firmware recovered from since boot |
+| `i2c.<chip>.last_fault_ms` | `uptime_ms` at that chip's latest fault; `0` when there has been none |
 
 ### `GET /settings`
 
@@ -108,16 +169,19 @@ curl http://tiny-engineer.local/settings
   "volume": 70,
   "welcome": true,
   "serial_log": false,
+  "push_button": false,
+  "push_button_pin": 20,
   "continuous_timeout": 5,
   "loading": "progress",
+  "eyes_style": "classic",
   "access_token_set": false,
+  "link_mode": "wifi",
   "wifi_configured": true,
-  "wifi_ssid": "MyNetwork",
-  "wifi_password_set": true,
-  "servo_mins": [60, 40, 45, 35, 40],
-  "servo_maxs": [130, 130, 135, 125, 130],
+  "servo_mins": [80, 80, 80, 80, 80],
+  "servo_maxs": [100, 100, 100, 100, 100],
   "rgb_order": "GRB",
-  "oled_rotate_180": false
+  "oled_rotate_180": false,
+  "wifi_networks": ["MyNetwork", "Office"]
 }
 ```
 
@@ -128,36 +192,35 @@ curl http://tiny-engineer.local/settings
 | `volume` | Speaker gain percent for tones and WAV playback (default **70**) |
 | `welcome` | Play welcome animation on boot when Wi-Fi connects (default **true**). Also enables head/neck motion during `sleep_inertia` loading |
 | `serial_log` | USB serial debug logging (default **false**). When off, diagnostic `Serial` output is suppressed |
-| `continuous_timeout` | Minutes a continuous animation (`typing` / `reading` / `thinking`) may run before the firmware switches to `attention` then idle (default **5**) |
+| `push_button` | Extension-port push-button reader (default **false**). When on, publishes immediate `button.down` / `button.up` plus `button.click` / `button.double_click` / `button.long_click` (see [Outbound events](#outbound-events)). Applies **immediately**. Local reactions use [Actions](#get-settingsactions) |
+| `push_button_pin` | GPIO on the Extension port for the push-button: **6**, **7**, **20**, or **21** (default **20**). Persists when `push_button` is off. Applies **immediately** when the extension is on |
+| `continuous_timeout` | Minutes a continuous animation (`typing` / `reading` / `thinking` / `talking`) may run before the firmware switches to `attention` then idle (default **5**) |
 | `loading` | Boot loading screen: `progress` (bar + large IP for 3 s) or `sleep_inertia` (eyes wake; no bar/IP). Default **`progress`**. Applies on **next reboot** |
+| `eyes_style` | OLED eyes look: `classic` (procedural rounded eyes), `kaomoji` (animated faces), `cover` (full-half bars for an eye-hole mask), `dots` (12×12 circles), or `kawaii` (round eyes with big moving pupils, a talking mouth, and blush). Default **`classic`**. Applies **immediately**. Classic, cover, and dots sequences are described under [`POST /anim`](#post-anim); kaomoji face mapping is under [Kaomoji eyes](#kaomoji-eyes); cover drawing is under [Cover eyes](#cover-eyes); dots drawing is under [Dots eyes](#dots-eyes); kawaii moods are under [Kawaii eyes](#kawaii-eyes) |
 | `access_token_set` | `true` when a non-empty access token is stored (secret itself is never returned) |
-| `wifi_configured` | `true` when a WiFi SSID is saved |
-| `wifi_ssid` | Saved network name (password is never returned) |
-| `wifi_password_set` | `true` when a non-empty WiFi password is saved |
-| `servo_mins` | Per-joint safe minimum degrees `[head, neck, left, right, body]` (stock defaults **60, 40, 45, 35, 40**) |
-| `servo_maxs` | Per-joint safe maximum degrees (stock defaults **130, 130, 135, 125, 130**). Each max must be greater than the matching min |
+| `link_mode` | `""` unprovisioned, `"wifi"`, or `"usb"` (connection mode; see [`serial.md`](serial.md)) |
+| `wifi_configured` | `true` when at least one WiFi network is saved |
+| `wifi_networks` | Saved network names (up to 5), in saved order. Passwords are never returned. At boot the robot scans and tries the visible saved networks strongest first, then the rest in this order (hidden SSIDs do not show in a scan). Change the list with [`PUT /settings/wifi`](#put-settingswifi) |
+| `servo_mins` | Per-joint safe minimum degrees `[head, neck, left, right, body]` (stock defaults **80, 80, 80, 80, 80**) |
+| `servo_maxs` | Per-joint safe maximum degrees (stock defaults **100, 100, 100, 100, 100**). Each max must be greater than the matching min |
 | `rgb_order` | Onboard WS2812 wire-byte order (`RGB`, `RBG`, `GRB`, `GBR`, `BRG`, `BGR`). Default **`GRB`**. Survives factory reset |
 | `oled_rotate_180` | OLED 180° rotation (`true` → `setRotation(2)`). Default **`false`**. Setup AP only. Survives factory reset |
+| `reboot_required` | `true` once the saved `hostname`, `loading` or WiFi networks differ from what this boot started with; those apply only after a reboot |
 
 ### `POST /settings`
 
-Update one or more settings. Query params. Values are written to NVS. `sleep_timeout`, `volume`, `welcome`, `serial_log`, `continuous_timeout`, and `access_token` apply immediately; a changed `hostname` or `loading` takes effect on the **next reboot**. WiFi credentials (`wifi_ssid` + `wifi_password`) are accepted **only in setup AP mode**; they are **tested before save**; on success the device connects to the home network and returns `wifi_connect_success`, `wifi_ip`, and `wifi_hostname`. `hostname` may be sent with those WiFi params (same validation as Config); it is saved before the STA connect so mDNS uses the chosen name immediately. Outside setup AP → **400** `wifi setup only in AP mode`. Servo ranges (`servo_mins` + `servo_maxs`) are also **setup AP only**; they apply immediately to motion clamps. Outside setup AP → **400** `servo setup only in AP mode`. RGB LED mapping (`rgb_order`) is **setup AP only** and applies immediately to the onboard LED. Outside setup AP → **400** `rgb setup only in AP mode`. OLED rotation (`oled_rotate_180`) is **setup AP only** and applies immediately to the display. Outside setup AP → **400** `oled setup only in AP mode`. Requires Bearer when auth is enabled.
+Update one or more settings from a JSON object body. Values are written to NVS. `sleep_timeout`, `volume`, `welcome`, `serial_log`, `push_button`, `push_button_pin`, `continuous_timeout`, `eyes_style`, and `access_token` apply immediately; a changed `hostname` or `loading` takes effect on the **next reboot**. WiFi networks are set with [`PUT /settings/wifi`](#put-settingswifi). On-device Actions are set with [`PUT /settings/actions`](#put-settingsactions). Servo ranges (`servo_mins` + `servo_maxs`), RGB LED mapping (`rgb_order`) and OLED rotation (`oled_rotate_180`) are **setup AP only** and apply immediately. Requires Bearer when auth is enabled.
 
 ```bash
-curl -X POST "http://tiny-engineer.local/settings?sleep_timeout=2"
-curl -X POST "http://tiny-engineer.local/settings?hostname=desk-bot"
-curl -X POST "http://tiny-engineer.local/settings?volume=40"
-curl -X POST "http://tiny-engineer.local/settings?welcome=0"
-curl -X POST "http://tiny-engineer.local/settings?serial_log=1"
-curl -X POST "http://tiny-engineer.local/settings?continuous_timeout=10"
-curl -X POST "http://tiny-engineer.local/settings?loading=sleep_inertia"
-curl -X POST "http://tiny-engineer.local/settings?access_token=secret"
-curl -X POST "http://tiny-engineer.local/settings?access_token="
-curl -X POST "http://192.168.4.1/settings?wifi_ssid=MyNetwork&wifi_password=secret&hostname=desk-bot"
-curl -X POST "http://192.168.4.1/settings?servo_mins=60,40,45,35,40&servo_maxs=130,130,135,125,130"
-curl -X POST "http://192.168.4.1/settings?rgb_order=GRB"
-curl -X POST "http://192.168.4.1/settings?oled_rotate_180=1"
-curl -X POST "http://tiny-engineer.local/settings?sleep_timeout=10&hostname=tiny-engineer&volume=70&welcome=1&serial_log=0&continuous_timeout=5&loading=progress"
+curl -X POST "http://tiny-engineer.local/settings" \
+  -H "Content-Type: application/json" \
+  -d '{"volume":40,"welcome":false,"eyes_style":"kaomoji"}'
+curl -X POST "http://tiny-engineer.local/settings" \
+  -H "Content-Type: application/json" \
+  -d '{"access_token":""}'
+curl -X POST "http://192.168.4.1/settings" \
+  -H "Content-Type: application/json" \
+  -d '{"servo_mins":[80,80,80,80,80],"servo_maxs":[100,100,100,100,100],"rgb_order":"GRB","oled_rotate_180":true}'
 ```
 
 ```json
@@ -168,45 +231,110 @@ curl -X POST "http://tiny-engineer.local/settings?sleep_timeout=10&hostname=tiny
   "volume": 70,
   "welcome": true,
   "serial_log": false,
+  "push_button": false,
+  "push_button_pin": 20,
   "continuous_timeout": 5,
   "loading": "progress",
+  "eyes_style": "classic",
   "access_token_set": true,
+  "link_mode": "wifi",
   "wifi_configured": true,
-  "wifi_ssid": "MyNetwork",
-  "wifi_password_set": true,
-  "servo_mins": [60, 40, 45, 35, 40],
-  "servo_maxs": [130, 130, 135, 125, 130],
+  "servo_mins": [80, 80, 80, 80, 80],
+  "servo_maxs": [100, 100, 100, 100, 100],
   "rgb_order": "GRB",
   "oled_rotate_180": false,
-  "wifi_connect_success": true,
-  "wifi_ip": "192.168.1.10",
-  "wifi_hostname": "desk-bot.local",
+  "wifi_networks": ["MyNetwork"],
   "reboot_required": true
 }
 ```
 
-| Param | Type | Range |
+| Field | Type | Range |
 | --- | --- | --- |
 | `sleep_timeout` | integer | 1–1440 minutes (positive) |
 | `hostname` | string | 1–31 chars, `[A-Za-z0-9-]`, not starting/ending with `-` |
 | `volume` | integer | 0–100 percent |
-| `welcome` | integer | `0` or `1` (boot welcome animation) |
-| `serial_log` | integer | `0` or `1` (USB serial debug logging) |
+| `welcome` | boolean | Boot welcome animation |
+| `serial_log` | boolean | USB serial debug logging |
+| `push_button` | boolean | Extension-port push-button (default **false**) |
+| `push_button_pin` | integer | Extension-port GPIO **6**, **7**, **20**, or **21** (default **20**); persists when off |
 | `continuous_timeout` | integer | 1–1440 minutes (positive) |
 | `loading` | string | `progress` or `sleep_inertia` |
-| `access_token` | string | 0–64 printable ASCII; empty string clears the token and disables auth |
-| `wifi_ssid` | string | 1–32 chars; setup AP only; must be sent with `wifi_password` |
-| `wifi_password` | string | 0–63 chars; setup AP only; empty allowed for open networks; tested before save |
-| `servo_mins` | string | Five comma-separated integers `0`–`180` (`head,neck,left,right,body`); setup AP only; must be sent with `servo_maxs` |
-| `servo_maxs` | string | Five comma-separated integers `0`–`180`; setup AP only; each value must be greater than the matching min |
+| `eyes_style` | string | `classic`, `kaomoji`, `cover`, `dots`, or `kawaii` |
+| `access_token` | string | 0–64 printable ASCII, no space at either end; empty string clears the token and disables auth. Setting or rotating a non-empty value disconnects WebSocket `/events` subscribers (they must reconnect with the new token); clearing does not |
+| `link_mode` | string | `wifi` or `usb`; setup Connection step uses `usb` for USB-only; Wi-Fi mode is usually set when saving networks via [`PUT /settings/wifi`](#put-settingswifi) |
+| `servo_mins` | integer array | Five integers `0`–`180` (`head, neck, left, right, body`); setup AP only; must be sent with `servo_maxs` |
+| `servo_maxs` | integer array | Five integers `0`–`180`; setup AP only; each value must be greater than the matching min |
 | `rgb_order` | string | `RGB`, `RBG`, `GRB`, `GBR`, `BRG`, or `BGR`; setup AP only; default `GRB` |
-| `oled_rotate_180` | integer | `0` or `1`; setup AP only; default `0` |
+| `oled_rotate_180` | boolean | Setup AP only; default `false` |
 
-At least one param required. Invalid or missing-all → **400**. WiFi params outside setup AP → **400** `wifi setup only in AP mode`. Servo range params outside setup AP → **400** `servo setup only in AP mode`. RGB order outside setup AP → **400** `rgb setup only in AP mode`. OLED rotation outside setup AP → **400** `oled setup only in AP mode`. WiFi test failure → **400** with error such as `SSID not found`, `Auth failed`, or `Timeout`. `reboot_required` is present and `true` only when the saved hostname differs from the one used at this boot. After successful WiFi save, `wifi_connect_success`, `wifi_ip`, and `wifi_hostname` are included.
+Leave out a field to keep its saved value. An empty object → **400** `send at least one setting`. A field this route does not know → **400** `unknown field <field>`. A field with the wrong type or out of range → **400** `invalid <field>` (servo ranges that overlap or exceed 180: `invalid servo_mins or servo_maxs`). Only one of `servo_mins` / `servo_maxs` → **400** `servo_mins and servo_maxs go together`. Enabling extensions (or changing their pins) so two enabled extensions would share a GPIO → **400** `pin conflict on GP… (…)` and nothing is saved. Outside setup AP mode, servo ranges → **400** `servo setup only in AP mode`, `rgb_order` → **400** `rgb setup only in AP mode`, `oled_rotate_180` → **400** `oled setup only in AP mode`. On any 400, nothing is saved. Replies carry `reboot_required` as in `GET /settings`.
+
+### `PUT /settings/wifi`
+
+Replace the saved WiFi networks with the list in the JSON body. The robot checks the whole list, then saves it in one write. A network without `password` keeps its saved password; a new network needs one (`""` for an open network). Order is boot priority for networks a scan misses. Requires Bearer when auth is enabled. Same JSON shape as `GET /settings`.
+
+Outside setup AP mode the list is saved **without a test** and applies at the next boot; the current connection stays up. In setup AP mode the robot **tests the first network** before saving; on success it joins that network and the reply adds `wifi_connect_success`, `wifi_ip`, and `wifi_hostname`. The test registers mDNS under the saved hostname, so set `hostname` with `POST /settings` first.
+
+```bash
+curl -X PUT "http://tiny-engineer.local/settings/wifi" \
+  -H "Content-Type: application/json" \
+  -d '[{"ssid":"Office","password":"secret"},{"ssid":"Home"},{"ssid":"Cafe","password":""}]'
+```
+
+| Field | Type | Range |
+| --- | --- | --- |
+| `ssid` | string | 1–32 chars; unique in the list |
+| `password` | string | 0–63 chars; omit to keep the saved password of a saved `ssid` |
+
+The list must hold 1 to 5 networks, so the robot always has one to try; factory reset clears WiFi. No JSON body → **400** `send a JSON body with Content-Type: application/json`. Body not a JSON array → **400** `body must be a JSON array`. An entry that is not an object, or has a non-string `ssid` or `password` (including `null`) → **400** `each network needs a string ssid and an optional string password`. Empty → **400** `send at least one wifi network`. New SSID without `password` → **400** `password required for a new network`. Bad length, the same SSID twice, or more than 5 networks → **400** `invalid ssid or password, duplicate ssid, or more than 5 networks`. WiFi test failure in setup AP mode → **400** with an error such as `SSID not found`, `Auth failed`, or `Timeout`.
+
+### `GET /settings/actions`
+
+List on-device Actions (event→effect bindings). Requires Bearer when auth is enabled. The SPA page `GET /actions` serves the web UI shell, not this JSON.
+
+```bash
+curl http://tiny-engineer.local/settings/actions
+```
+
+```json
+{
+  "ok": true,
+  "actions": [
+    { "on": "button.double_click", "do": "sound", "sound": "click" },
+    { "on": "button.*", "do": "anim", "anim": "welcome" }
+  ]
+}
+```
+
+### `PUT /settings/actions`
+
+Replace the whole Actions list. Body is a JSON object with array `actions` (0–**16** rows). Each row needs string `on` (1–47 chars; `*` matches any sequence in the event type) and string `do` (`sound` or `anim`), plus the matching param: `sound` (`bell`/`click`) or `anim` (animation name). Extra fields are ignored. Applies immediately. When an outbound event is published, every matching row runs in list order. Requires Bearer when auth is enabled.
+
+```bash
+curl -X PUT "http://tiny-engineer.local/settings/actions" \
+  -H "Content-Type: application/json" \
+  -d '{"actions":[{"on":"button.click","do":"sound","sound":"bell"}]}'
+```
+
+Missing `actions` array → **400**. More than 16 rows or an invalid row → **400** and the previous list remains.
+
+### `POST /actions/test`
+
+Simulate an event type: run matching Actions without publishing a WebSocket/serial envelope. Body JSON `{ "type": "button.click" }`. Requires provisioned robot + Bearer when auth is enabled (same access class as `POST /anim`). Missing/empty `type` → **400**.
+
+```bash
+curl -X POST "http://tiny-engineer.local/actions/test" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"button.double_click"}'
+```
+
+```json
+{ "ok": true, "type": "button.double_click" }
+```
 
 ### `POST /settings/reset`
 
-Factory reset: clears the NVS `te` namespace and restores settings to compile-time defaults, including WiFi credentials. **Servo min/max, RGB LED mapping (`rgb_order`), and OLED rotation (`oled_rotate_180`) are kept.** After reset, power-cycle (or press reset) so the device reopens setup AP mode and WiFi can be configured again; the servo, screen, and LED steps are pre-filled with the saved values and can be retuned. Until reboot, credentials are cleared in NVS but the radio may still be on the previous STA network. No query params. Requires Bearer when auth is enabled. Same JSON shape as `GET /settings`; includes `reboot_required` when the boot hostname, loading screen, or saved WiFi differed from defaults before reset.
+Factory reset: clears the NVS `te` namespace and restores settings to compile-time defaults and clears every saved WiFi network and Actions list. **Servo min/max, RGB LED mapping (`rgb_order`), and OLED rotation (`oled_rotate_180`) are kept.** Internal last-pose blob (`spose`) is cleared/reset with defaults. After reset, power-cycle (or press reset) so the device reopens setup AP mode and WiFi can be configured again; the servo, screen, and LED steps are pre-filled with the saved values and can be retuned. Until reboot, credentials are cleared in NVS but the radio may still be on the previous STA network. No body. Requires Bearer when auth is enabled. Same JSON shape as `GET /settings`.
 
 The Config web UI clears the browser-stored Bearer token and shows a one-shot gate: power-cycle the device, then join the robot WiFi shown on the OLED and open the setup wizard. It does not poll for reconnect.
 
@@ -222,9 +350,18 @@ curl -X POST "http://tiny-engineer.local/settings/reset"
   "volume": 70,
   "welcome": true,
   "serial_log": false,
+  "push_button": false,
+  "push_button_pin": 20,
   "continuous_timeout": 5,
   "loading": "progress",
+  "eyes_style": "classic",
   "access_token_set": false,
+  "wifi_configured": false,
+  "servo_mins": [80, 80, 80, 80, 80],
+  "servo_maxs": [100, 100, 100, 100, 100],
+  "rgb_order": "GRB",
+  "oled_rotate_180": false,
+  "wifi_networks": [],
   "reboot_required": true
 }
 ```
@@ -245,7 +382,7 @@ curl -X POST http://tiny-engineer.local/test/audio
 
 ### `POST /test/audio/bell`
 
-Plays `/bell.wav` from LittleFS (`playBell()`). Git source is [`assets/bell.wav`](../assets/bell.wav) (44100 Hz mono PCM); `pio run` copies it into `data/` for the filesystem image. After changing the asset, upload with `pio run -t upload` or `pio run -t uploadfs`. Do not edit `data/` by hand — the next build overwrites it.
+Plays `/bell.wav` from LittleFS (`playBell()`). Git source is [`assets/bell.wav`](../assets/bell.wav) (44100 Hz mono PCM); `pio run` downsamples it to 22050 Hz into `data/` for the filesystem image. After changing the asset, upload with `pio run -t upload` or `pio run -t uploadfs`. Do not edit `data/` by hand — the next build overwrites it.
 
 ```bash
 curl -X POST http://tiny-engineer.local/test/audio/bell
@@ -295,78 +432,73 @@ curl -X POST http://tiny-engineer.local/test/led
 
 ### `POST /setup/servo`
 
-Setup AP only. Slowly move one servo, or all five to 90°, using the full **0–180°** electrical range (no saved safe-range clamp). ~25°/s (`SERVO_CALIB_SPEED_DEG_S`). Used by the setup wizard for seating printed parts at 90° and for range finding. Handler blocks until the move finishes. Does **not** require Wi-Fi credentials. Outside provisioning → **400** `setup servo only in AP mode`.
+Setup AP only. Slowly move one servo, or all five to 90°, using the full **0–180°** electrical range (no saved safe-range clamp). ~25°/s (`SERVO_CALIB_SPEED_DEG_S`). Used by the setup wizard for seating printed parts at 90° and for range finding. Handler blocks until the move finishes. Does **not** require Wi-Fi credentials. Outside provisioning → **400** `setup only in AP mode`.
 
-Either `all=90`, or `index` + `angle`.
+JSON body: either `{"all": 90}`, or `index` + `angle`.
 
-| Param | Type | Range |
+| Field | Type | Range |
 | --- | --- | --- |
 | `all` | integer | `90` (every joint to 90°) |
 | `index` | integer | `0`–`4` (required with `angle` when `all` is omitted) |
 | `angle` | number | `0`–`180` |
 
 ```bash
-curl -X POST "http://192.168.4.1/setup/servo?all=90"
-curl -X POST "http://192.168.4.1/setup/servo?index=0&angle=90"
+curl -X POST "http://192.168.4.1/setup/servo" -H "Content-Type: application/json" -d '{"all":90}'
+curl -X POST "http://192.168.4.1/setup/servo" -H "Content-Type: application/json" -d '{"index":0,"angle":90}'
 ```
 
 ```json
 { "ok": true, "setup": "servo", "index": 0, "angle": 90 }
 ```
 
-Wrong params return **400** and do not move any servo:
+Wrong fields return **400** and do not move any servo:
 
 | `error` | When |
 | --- | --- |
-| `setup servo only in AP mode` | Not in setup AP |
+| `setup only in AP mode` | Not in setup AP |
 | `invalid all` | `all` present but not `90` |
-| `missing index or angle` | Neither `all=90` nor both `index` and `angle` |
-| `invalid index` | Non-integer `index` |
-| `index out of range` | `index` outside `0`–`4` |
-| `invalid angle` | Non-numeric `angle` |
-| `angle out of range` | `angle` outside `0`–`180` |
+| `invalid index` | `index` missing, not an integer, or outside `0`–`4` |
+| `invalid angle` | `angle` missing, not a number, or outside `0`–`180` |
 
 After STA is up, use `POST /test/servo` (clamped to saved min/max).
 
 ### `POST /setup/led`
 
-Setup AP only. Holds the LED so provisioning dim-blue does not clobber the preview. Does **not** require Wi-Fi credentials. Outside provisioning → **400** `setup led only in AP mode`.
+Setup AP only. Holds the LED so provisioning dim-blue does not clobber the preview. Does **not** require Wi-Fi credentials. Outside provisioning → **400** `setup only in AP mode`.
 
-Logical **color** (`R` / `G` / `B`) lights firmware red/green/blue using the saved `rgb_order`, or `rgb_order` query if sent (wizard remap preview). Wire **byte** lights that WS2812 channel order-independent (`LED_COLOR_ORDER_RGB`, that channel 255). `byte=off` or neither `color` nor `byte` releases the hold and restores dim blue. Do not send `color` and `byte` together.
+Logical **color** (`R` / `G` / `B`) lights firmware red/green/blue using the saved `rgb_order`, or the `rgb_order` field if sent (wizard remap preview). Wire **byte** lights that WS2812 channel order-independent (`LED_COLOR_ORDER_RGB`, that channel 255). An empty body (neither `color` nor `byte`) releases the hold and restores dim blue. Do not send `color` and `byte` together.
 
-| Param | Type | Range |
+| Field | Type | Range |
 | --- | --- | --- |
 | `color` | string | `R`, `G`, or `B` (logical; uses saved or `rgb_order`) |
 | `rgb_order` | string | `RGB`, `RBG`, `GRB`, `GBR`, `BRG`, or `BGR` (optional with `color`) |
-| `byte` | string | `0`, `1`, `2`, or `off` (omit or `off` releases the hold) |
+| `byte` | integer | `0`, `1`, or `2` |
 
 ```bash
-curl -X POST "http://192.168.4.1/setup/led?color=R"
-curl -X POST "http://192.168.4.1/setup/led?color=R&rgb_order=GRB"
-curl -X POST "http://192.168.4.1/setup/led?byte=0"
-curl -X POST "http://192.168.4.1/setup/led?byte=off"
+curl -X POST "http://192.168.4.1/setup/led" -H "Content-Type: application/json" -d '{"color":"R","rgb_order":"GRB"}'
+curl -X POST "http://192.168.4.1/setup/led" -H "Content-Type: application/json" -d '{"byte":0}'
+curl -X POST "http://192.168.4.1/setup/led"
 ```
 
 ```json
 { "ok": true, "setup": "led", "color": "R" }
 ```
 
-Wrong params return **400** and do not change hold state except `off` / omitted light params:
+Wrong fields return **400** and do not change the hold:
 
 | `error` | When |
 | --- | --- |
-| `setup led only in AP mode` | Not in setup AP |
-| `color and byte conflict` | Both `color` and a numeric `byte` present |
+| `setup only in AP mode` | Not in setup AP |
+| `color and byte conflict` | Both `color` and `byte` present |
 | `invalid color` | `color` not `R`, `G`, or `B` |
 | `invalid rgb_order` | `rgb_order` present but not a valid permutation |
-| `invalid byte` | `byte` present but not an integer and not `off` |
-| `byte out of range` | Integer `byte` outside `0`–`2` |
+| `invalid byte` | `byte` not an integer `0`–`2` |
 
-Save the labeled permutation with `POST /settings?rgb_order=GRB` (setup AP only). The saved order applies immediately to animation colors, boot status, halt blinks, and `POST /test/led`.
+Save the labeled permutation with `POST /settings` `{"rgb_order":"GRB"}` (setup AP only). The saved order applies immediately to animation colors, boot status, halt blinks, and `POST /test/led`.
 
 ### `POST /setup/audio`
 
-Setup AP only. Plays `welcome.wav` from LittleFS (`playWelcome()`, ~2.7 s). Same speaker gain as settings `volume`. No query params. Does **not** require Wi-Fi credentials. Handler blocks until playback finishes. Outside provisioning → **400** `setup audio only in AP mode`. Missing/unreadable WAV → **500** `welcome playback failed`.
+Setup AP only. Plays `welcome.wav` from LittleFS (`playWelcome()`, ~2.7 s). Same speaker gain as settings `volume`. No body. Does **not** require Wi-Fi credentials. Handler blocks until playback finishes. Outside provisioning → **400** `setup only in AP mode`. Missing/unreadable WAV → **500** `welcome playback failed`.
 
 ```bash
 curl -X POST "http://192.168.4.1/setup/audio"
@@ -380,16 +512,16 @@ After STA is up, use `POST /test/audio/bell` (or `/test/audio` for tones).
 
 ### `POST /setup/oled`
 
-Setup AP only. Preview OLED 180° rotation without saving. Does **not** require Wi-Fi credentials. Outside provisioning → **400** `setup oled only in AP mode`.
+Setup AP only. Preview OLED 180° rotation without saving. Does **not** require Wi-Fi credentials. Outside provisioning → **400** `setup only in AP mode`.
 
-`rotate_180=1` applies `setRotation(2)` and draws `THIS WAY UP`. `rotate_180=0` applies `setRotation(0)` and draws the same test. Omit `rotate_180` to restore saved rotation and the provisioning join-AP text.
+`{"rotate_180": true}` applies `setRotation(2)` and draws `THIS WAY UP`. `{"rotate_180": false}` applies `setRotation(0)` and draws the same test. An empty body restores the saved rotation and the provisioning join-AP text.
 
-| Param | Type | Range |
+| Field | Type | Range |
 | --- | --- | --- |
-| `rotate_180` | integer | `0` or `1` (omit to restore provisioning text) |
+| `rotate_180` | boolean | Leave out to restore the provisioning text |
 
 ```bash
-curl -X POST "http://192.168.4.1/setup/oled?rotate_180=1"
+curl -X POST "http://192.168.4.1/setup/oled" -H "Content-Type: application/json" -d '{"rotate_180":true}'
 curl -X POST "http://192.168.4.1/setup/oled"
 ```
 
@@ -397,41 +529,53 @@ curl -X POST "http://192.168.4.1/setup/oled"
 { "ok": true, "setup": "oled", "rotate_180": true }
 ```
 
-Wrong params return **400**:
+Wrong fields return **400**:
 
 | `error` | When |
 | --- | --- |
-| `setup oled only in AP mode` | Not in setup AP |
-| `invalid rotate_180` | `rotate_180` present but not `0` or `1` |
+| `setup only in AP mode` | Not in setup AP |
+| `invalid rotate_180` | `rotate_180` present but not a boolean |
 
-Save with `POST /settings?oled_rotate_180=1` (setup AP only). The saved value applies immediately and on the next boot.
+Save with `POST /settings` `{"oled_rotate_180":true}` (setup AP only). The saved value applies immediately and on the next boot.
+
+### `POST /servos/park`
+
+Flash-safe park: stop the current animation, smoothly move every joint to its calibrated mid, persist the pose to NVS, and keep PWM enabled until the next reboot (skips idle limp). No body. Requires Bearer when auth is enabled. Available in setup AP and after provisioning (does not require a chosen connection mode).
+
+```bash
+curl -X POST "http://tiny-engineer.local/servos/park"
+tiny-engineer park --transport serial
+```
+
+```json
+{ "ok": true, "park": "servos", "hold": true }
+```
+
+Pose NVS write failure → **400** `{"ok":false,"error":"pose save failed"}` (PWM hold is still armed). Servo driver faulted (`i2c.pca9685.ok` false in [`GET /health`](#get-health)) → **503** `{"ok":false,"error":"servo driver down"}`: the joints did not move, so the pose is not saved and no PWM hold is armed. Details: [hardware/servos.md](hardware/servos.md#flash-safe-park).
 
 ### `POST /test/servo`
 
-Smoothly move one servo to an angle at **~140°/s** (`SERVO_MAX_SPEED_DEG_S`) from its last commanded position. Query params required. Handler blocks until the move finishes.
+Smoothly move one servo to an angle at **~140°/s** (`SERVO_MAX_SPEED_DEG_S`) from its last commanded position. JSON body required. Handler blocks until the move finishes.
 
-| Param | Type | Range |
+| Field | Type | Range |
 | --- | --- | --- |
 | `index` | integer | `0`–`4` |
 | `angle` | number | `0`–`180` |
 
 ```bash
-curl -X POST "http://tiny-engineer.local/test/servo?index=0&angle=90"
+curl -X POST "http://tiny-engineer.local/test/servo" -H "Content-Type: application/json" -d '{"index":0,"angle":90}'
 ```
 
 ```json
 { "ok": true, "test": "servo", "index": 0, "angle": 90 }
 ```
 
-Wrong params return **400** and do not move any servo:
+Wrong fields return **400** and do not move any servo:
 
 | `error` | When |
 | --- | --- |
-| `missing index or angle` | Either query param absent |
-| `invalid index` | Non-integer `index` (e.g. `abc`, `1x`) |
-| `index out of range` | `index` outside `0`–`4` |
-| `invalid angle` | Non-numeric `angle` |
-| `angle out of range` | `angle` outside `0`–`180` |
+| `invalid index` | `index` missing, not an integer, or outside `0`–`4` |
+| `invalid angle` | `angle` missing, not a number, or outside `0`–`180` |
 
 Assembled robot: firmware clamps to the NVS min/max from setup (stock defaults in [robot-movement.md](robot-movement.md)); this route still accepts 0–180 and clamps. For unclamped assembly moves, use setup AP `POST /setup/servo`.
 
@@ -449,7 +593,7 @@ curl http://tiny-engineer.local/anim
 
 | Field | Meaning |
 | --- | --- |
-| `animation` | `none`, `typing`, `reading`, `thinking`, `ring`, `welcome`, `attention`, `error`, `abort`, `dead`, `wakeup`, or `sleep` |
+| `animation` | `none`, `typing`, `reading`, `thinking`, `talking`, `ring`, `welcome`, `attention`, `error`, `abort`, `dead`, `wakeup`, or `sleep` |
 
 ### `POST /anim`
 
@@ -457,12 +601,13 @@ Request an animation switch. Each animation runs at least **1s**; if the current
 
 | Param | Type | Values |
 | --- | --- | --- |
-| `name` | string | `none`, `typing`, `reading`, `thinking`, `ring`, `welcome`, `attention`, `error`, `abort`, `dead`, `wakeup`, `sleep` |
+| `name` | string | `none`, `typing`, `reading`, `thinking`, `talking`, `ring`, `welcome`, `attention`, `error`, `abort`, `dead`, `wakeup`, `sleep` |
 
 ```bash
 curl -X POST "http://tiny-engineer.local/anim?name=typing"
 curl -X POST "http://tiny-engineer.local/anim?name=reading"
 curl -X POST "http://tiny-engineer.local/anim?name=thinking"
+curl -X POST "http://tiny-engineer.local/anim?name=talking"
 curl -X POST "http://tiny-engineer.local/anim?name=ring"
 curl -X POST "http://tiny-engineer.local/anim?name=welcome"
 curl -X POST "http://tiny-engineer.local/anim?name=wakeup"
@@ -478,36 +623,121 @@ curl -X POST "http://tiny-engineer.local/anim?name=none"
 { "ok": true, "animation": "typing" }
 ```
 
+Eye detail below for `eyes_style=classic` (default). With `eyes_style=cover`, the same sequences drive full-half bars ([Cover eyes](#cover-eyes)). With `eyes_style=dots`, the same sequences drive 12×12 circles ([Dots eyes](#dots-eyes)). With `eyes_style=kawaii`, the same sequences move and blink a kawaii face whose expression follows the animation and whose mouth says the voice clips ([Kawaii eyes](#kawaii-eyes)). With `eyes_style=kaomoji`, faces follow [Kaomoji eyes](#kaomoji-eyes) instead of procedural blinks, glances, flicker, or X eyes. Servo/audio behavior is the same for every style.
+
+Durations and quoted lines below are the stock clips in [`assets/`](../assets/). A filesystem built with `custom_audio_mod` can replace some of those WAVs. Phrase timing then follows that clip's `.cue` file on LittleFS (`/welcome.cue` and the same pattern for `attention`, `error`, `abort`, and `dead`). See [flash.md](flash.md).
+
 | `name` | Behavior |
 | --- | --- |
-| `none` | Head/neck/body → mid; hands down (right `min`, left `max` — inverted scales), then hold |
+| `none` | Head/neck/body → mid; hands down (right `min`, left `max` — inverted scales). After all joints still for 2 s, PCA9685 PWM is full-off (servos limp; head may droop). Setup AP does not release PWM. |
 | `typing` | **Continuous.** Alternating hands with randomness (15° band from hand limits). Head nods slowly on lowest 10° of head limits. Body sways ±5° around mid; neck counters opposite so head stays put. Runs until replaced, or until `continuous_timeout` triggers `attention`. Same-name re-`POST` refreshes that timeout without restarting motion. |
 | `reading` | **Continuous.** Hands/body park as in `none`. Head nods on same lowest 10° band as typing, but slower. Neck sweeps ±10° around mid; right (angle down) slower than left (angle up). Occasional right-hand down-arrow bursts (1–3 presses, same 15° band as typing). Runs until replaced, or until `continuous_timeout` triggers `attention`. Same-name re-`POST` refreshes that timeout without restarting motion. |
 | `thinking` | **Continuous.** Hands/body park as in `none`. Head (pitch) and neck (yaw) ease from the current pose into thinking poses (up + slight left/right). Move → pause → optional micro-adjust (sometimes chained) → pause; nearby pose drift with occasional larger shifts after ~2.2 s, more often over time. Axes stagger start/duration; no periodic sway. Runs until replaced, or until `continuous_timeout` triggers `attention`. Same-name re-`POST` refreshes that timeout without restarting motion. |
+| `talking` | **Continuous.** Speaking fidget with no sound of its own. Also the default pose for [`POST /play`](#post-play). Via `/anim`, the head faces the user just above mid with soft random nods, slow neck drift, occasional small torso shifts, and occasional right-hand lifts. During `/play` with pose `talking`, motion follows speech energy from the PCM stream (no extra metadata): emphasis triggers nods, silence settles the pose, phrase starts may raise the hand or shift the torso (not both). **Classic eyes:** a little taller than idle; glances away when ambient or quiet, gaze locked on the listener while speech energy is high. Runs until replaced, or until `continuous_timeout` triggers `attention`. Same-name re-`POST` refreshes that timeout without restarting motion. |
 | `ring` | **One-shot** service-bell gesture; does not loop. Wind-up (body `min`, neck mid, head mid+10°, both hands `max`) → fast right-hand strike to `min+5°` with head to `min` → plays `bell.wav` once on strike (LittleFS; same `uploadfs` requirement as `/test/audio/bell`) → slower bounce to `min+20°` → return to `none` pose and stop. After completion, `GET /anim` reports `none`. |
 | `welcome` | **One-shot** hello gesture synced to `welcome.wav` (~2.7 s). Right hand raises during "Hello, human.", holds through the pause, wiggles during "What are we building today?", then lowers. Head nods to mid+10° and returns. Plays automatically after successful Wi-Fi connect at boot; also via API. Requires `welcome.wav` on LittleFS (same `uploadfs` flow as `bell.wav`). After completion, `GET /anim` reports `none`. |
-| `attention` | Friendly input-request gesture synced to `attention.wav` (~3.0 s, "pst... human.... you might want to take a look"). Moves into a calm prompt pose first (centered body/neck, head slightly up, right hand raised partway), waits until all servos stop, then plays audio with phased eye cues and light neck/head/hand motion during playback (whisper hold → lean toward user → glance/point on "take a look"). After audio ends (or if audio fails to start), holds a gentle waiting loop for **1 minute** (soft head/neck drifts plus occasional slight right-hand waves), then returns to `none`. Requires `attention.wav` on LittleFS (same `uploadfs` flow as `bell.wav`). |
+| `attention` | Friendly input-request gesture synced to `attention.wav` (~3.0 s, "pst... human.... you might want to take a look"). Moves into a calm prompt pose first (centered body/neck, head slightly up, right hand raised partway), waits until all servos stop, then plays audio with light neck/head/hand motion during playback (whisper hold → lean toward user → glance/point on "take a look"). **Classic eyes:** phased blink/look cues during audio. After audio ends (or if audio fails to start), holds a gentle waiting loop for **1 minute** (soft head/neck drifts plus occasional slight right-hand waves), then returns to `none`. Requires `attention.wav` on LittleFS (same `uploadfs` flow as `bell.wav`). |
 | `error` | Critical task-obstacle gesture synced to `error.wav` (~2.2 s, "Uh-oh. Human, we have a problem."). Moves into an obstacle-presenting pose first (body/neck angled toward the task, head concerned/down, right hand presenting the blocker, left hand indicating task area), waits until the pose settles, then plays audio with small nervous head/neck glances during playback. After audio ends (or if audio fails to start), holds a subtle blocked loop for **1 minute**, then returns to `none`. Requires `error.wav` on LittleFS (same `uploadfs` flow as `bell.wav`). |
-| `abort` | **One-shot** resigned abort gesture synced to `abort.wav` (~2.5 s, "Fine. I didn't want to finish it anyway."). Raises both hands, lifts the head, and twists the neck sideways before audio starts. During playback it shrugs, dips the head, and adds a dismissive side twist with matching eye glances/squints. Requires `abort.wav` on LittleFS (same `uploadfs` flow as `bell.wav`). After completion, returns to `none` pose and `GET /anim` reports `none`. |
-| `dead` | **Hold.** Out-of-power: same obstacle pose + `error.wav` as `error` ("Uh-oh. Human, we have a problem."), but eyes use a failing-display flicker (irregular heights + brief blank pulses, denser near the end) instead of the error nervous scan. When the line ends (or audio fails), eyes squeeze nearly shut (~300 ms) while head/hands collapse, hold shut briefly (~200 ms), then snap to **X X**. Stays in that pose with X eyes and pulsing red until another animation is requested. Does not auto-return to `none`. Requires `error.wav` on LittleFS. |
-| `wakeup` | **One-shot** sleep-inertia wake (~5.5 s + settle), same sequence as boot `loading=sleep_inertia`. Eyes open over 2 s (cubic ease) from closed, two blinks at 2.4 s and 3.8 s, head rises from chin-down with a fading neck wave. Always moves head/neck/hands (API path). After completion, `GET /anim` reports `none`. Does not play welcome audio — use `welcome` for that. |
-| `sleep` | **One-shot** enter sleep: eye close + head lowers to chin-down (`SLEEP_HEAD_DOWN`, same pose `wakeup` starts from), then blank OLED and `DISPLAYOFF`. Same path as the idle `sleep_timeout`. Holds `sleep` until the head settles; then `GET /anim` reports `none` while the device stays asleep until another non-`sleep`/`none` animation wakes it. |
+| `abort` | **One-shot** resigned abort gesture synced to `abort.wav` (~2.5 s, "Fine. I didn't want to finish it anyway."). Raises both hands, lifts the head, and twists the neck sideways before audio starts. During playback it shrugs, dips the head, and adds a dismissive side twist. **Classic eyes:** matching glances/squints. Requires `abort.wav` on LittleFS (same `uploadfs` flow as `bell.wav`). After completion, returns to `none` pose and `GET /anim` reports `none`. |
+| `dead` | **Hold.** Out-of-power: same obstacle pose as `error`, then `dead.wav` (~3.4 s, "Insufficient resources, shutting doooooowwwwnnnn..."). **Classic eyes:** failing-display flicker (irregular heights + brief blank pulses, denser near the end of the first line); at ~1.7 s ("shutting down") eyes squeeze nearly shut (~300 ms) while head/hands collapse over **~500 ms**, hold shut briefly (~200 ms), then snap to **X X** while the drawn-out shutdown still plays. If audio fails to start, collapse immediately. Stays with X eyes and pulsing red until another animation is requested. **Cover:** same flicker and squeeze as height changes, then both halves stay black (no X). **Dots:** same flicker and squeeze as circle size, then X marks in 12×12 boxes. **Kaomoji:** Sad face (no X). **Kawaii:** Sad face, then `x x` eyes during the X hold. Does not auto-return to `none`. Requires `dead.wav` on LittleFS. |
+| `wakeup` | **One-shot** sleep-inertia wake (~5.5 s + settle), same sequence as boot `loading=sleep_inertia`. Plays only while asleep or entering sleep (`sleep` nod-off / OLED-off sleep). If already awake (or mid eye-open), request is a no-op: current animation stays, a pending `sleep` is cancelled, and the idle sleep timer resets; HTTP still returns success. **Classic eyes:** open over 2 s (cubic ease) from closed, two blinks at 2.4 s and 3.8 s. Head rises from chin-down with a fading neck wave. Always moves head/neck/hands when it plays (API path). After completion, `GET /anim` reports `none`. Does not play welcome audio — use `welcome` for that. |
+| `sleep` | **One-shot** nod-off (~2 s). Lids droop toward nearly shut (0–0.7 s) while the head barely moves, then a small resist: lids ease back toward half open as the head starts down (0.7–1.1 s). Lids then shut and the head eases to chin-down (`SLEEP_HEAD_DOWN`, same pose `wakeup` starts from) by 2.0 s. OLED blanks when the lids hit shut (`DISPLAYOFF`). **Classic, cover, dots, kawaii:** that lid curve. **Kaomoji:** Sleep face during the close window, then blank. Same path as the idle `sleep_timeout`. Holds `sleep` until the head settles; then `GET /anim` reports `none` while the device stays asleep until another non-`sleep`/`none` animation wakes it. After the sleep pose is still for 2 s, PWM is full-off (same limp as `none`). |
+
+#### Kaomoji eyes
+
+When `eyes_style=kaomoji`, the OLED shows looping faces from the expression library (3 s / 30 frames). Mapping:
+
+| Animation / phase | Face |
+| --- | --- |
+| `none` (idle) | Idle |
+| `typing`, `thinking` | Thinking |
+| `reading`, `attention` | Curious |
+| `ring` | Surprise |
+| `welcome`, `talking` | Happy |
+| `error` | Angry |
+| `abort` | Panic |
+| `wakeup` | Sleepy |
+| `sleep` / sleep-close | Sleep |
+| sleep-open | Idle |
+| `dead` | Sad |
+
+#### Cover eyes
+
+When `eyes_style=cover`, each eye is a solid white rectangle filling one half of the 128×32 panel (left `x=0`, right `x=64`, width 64). Open eyes are the full 32px tall, so a mask hole of any shape over that half stays lit. Animations keep the classic pose and blink timing, but only height changes: leftover rows are black on the top and/or bottom. A blink grows both margins. A look-up leaves more black on the bottom; a look-down leaves more on the top. Horizontal glance does not move the light. The `dead` X hold paints both halves black.
+
+#### Dots eyes
+
+When `eyes_style=dots`, each eye is a filled circle. At the classic open height the circle’s bounding box is 12×12 px, centered on the classic eye. Diameter scales with rendered height (`12 * height / 14`), so blinks, squints, wide looks, and the `dead` flicker shrink or grow the dots. Height 0 draws nothing (full blink or sleep close). Glance, scan, and look-up/down move the circle with the classic center. The `dead` X hold draws X marks in 12×12 boxes at those centers. Diameter is capped at the 32 px panel height.
+
+#### Kawaii eyes
+
+When `eyes_style=kawaii`, each eye is a round eye about 23 px across with a big dark pupil and white catch-lights in it (one round light and two small dots). A small mouth sits between the eyes, with dithered blush under the outer corners. The classic pose still drives position, height, glances, and blinks, and the pupils look where its glances point: at the task or the human, up while thinking. Two animations lead the eyes themselves: `typing` reads code instead of following the typing jitter, and `ring` keeps the eyes full size instead of the classic small circles. Moods change pupil size (small when surprised or angry, large when sad). A pupil otherwise keeps its size: lids, smiles, and blinks cover it like eyelids, and a white rim always stays around it. A closed eye draws a `‿` lid line (`∩` while smiling). Each animation picks a mood, and the face eases into it. Eye size, happy crescents, and mouth opening use springs with a little overshoot. Shape changes that cannot morph (round eyes to `> <`, `x x`, or hearts) happen behind a quick blink.
+
+While `welcome`, `attention`, `error`, `abort`, or `dead` plays its stock clip, the mouth says the words in sync (quoted below), closing on p, b, m, t, d, and k. A custom clip with its own `.cue` file says something else, so the mouth babbles through it instead.
+
+| Animation / phase | Mood |
+| --- | --- |
+| `none` (idle) | Mostly a `ω` or `‿` smile. Every 4.5–10 s, a short accent: `^ ^` grin, a wink, excited (bigger eyes, hop, twinkles, open grin), or rarely heart eyes |
+| `typing` | Mostly focused: lids slightly lowered, short mouth. The eyes read code: a few lines word by word, then a dart to another spot, and again. Now and then a pleased smile, a quick `^ ^` grin, or a wink; these come more often the longer it has been since an `error`, `abort`, or `dead` (most often after about 90 s) |
+| `reading` | Mostly lids barely lowered, small `ω`. Now and then a pleased, happy read, an "ooh" (`o` mouth, wider eyes), or a grin; more often while work goes well |
+| `thinking` | Mostly lids slightly lowered, wobbly mouth off to one side. Now and then an "aha!": eyes widen and look up, star glints, a little hop, open smile; then back to thinking |
+| `ring` | A celebration, keyed to the bell's ding. Wind-up: a deep breath that deepens until the strike (the face rises, eyes widen, pupils tighten, cheeks flush, the mouth draws in a big `o`). The ding: an excited yell (eyes pop, huge open mouth) and stars burst from the outer sides of the eyes, swirling off-screen with trails that shorten as the bell fades. Only the pupils shake, with the bell's own loudness, from the strike to the last of the ring (about 1.4 s). Then a dreamy afterglow (half-closed happy eyes, `ω`). Without a bell clip the ding comes after 1.5 s |
+| `welcome` | Excited; says "Hello, human. What are we building today?" |
+| `attention` | Curious: slightly wide eyes, small `o`; says "Psst... human... you might want to take a look." |
+| `error` | Angry: lids tilted down at the inner corners, frown; says "Uh-oh. Human, we have a problem." |
+| `abort` | Panic: `> <` eyes, wavy mouth; says "Fine. I didn't want to finish it anyway." |
+| `wakeup` | Sleepy: heavy lids, yawn |
+| `talking` | The mouth talks in syllables, shaped as `ah` (tall), `ee` (wide), or `o` (round). With `/play` audio it opens with the speech loudness and changes shape on each syllable onset. Without audio it babbles in short phrases with pauses |
+| `sleep` / sleep-close | Lids close, small `ω` |
+| `dead` | Sad (lids tilted down at the outer corners, frown), then `x x` eyes during the X hold. Says "Insufficient resources... shutting doooowwwnnn" |
 
 Wrong params return **400**:
 
 | `error` | When |
 | --- | --- |
 | `missing name` | Query param `name` absent |
-| `unknown animation` | `name` not `none`, `typing`, `reading`, `thinking`, `ring`, `welcome`, `attention`, `error`, `abort`, `dead`, `wakeup`, or `sleep` |
+| `unknown animation` | `name` not `none`, `typing`, `reading`, `thinking`, `talking`, `ring`, `welcome`, `attention`, `error`, `abort`, `dead`, `wakeup`, or `sleep` |
+
+### `POST /play`
+
+Streams a WAV to the speaker while one animation runs, then returns to the continuous animation (`typing`, `reading`, `thinking`, `talking`) that was running before the request, otherwise to `none`. The body is played as it arrives, so clips of any length need no storage on the robot. The response comes when the clip ends.
+
+| Part | Value |
+| --- | --- |
+| Path | `/play` runs `talking`; `/play/{name}` runs `talking`, `typing`, `reading`, `thinking`, or `none`. Animations with their own sound are rejected so two clips never overlap |
+| Body | WAV, 16-bit mono PCM at 22050 Hz (the firmware `SAMPLE_RATE`). `Content-Length` is required. Chunks other than `fmt ` and `data` are skipped |
+| `Authorization` | `Bearer <token>` when `access_token` is set |
+
+The animation starts with the first audio sample, so a rejected request never moves the robot. While the clip plays the robot keeps its eyes, LED and sleep timer running, and the clip counts as activity. When the pose is `talking`, the firmware derives speech energy from the streamed PCM and drives reactive head/hand/eye motion; other poses ignore audio for motion.
+
+```bash
+curl -X POST http://tiny-engineer.local/play -H 'Content-Type: audio/wav' --data-binary @clip.wav
+curl -X POST http://tiny-engineer.local/play/thinking -H 'Content-Type: audio/wav' --data-binary @hmm.wav
+```
+
+```json
+{ "ok": true, "played_ms": 3000 }
+```
+
+The unified CLI wraps this for agents: `tiny-engineer play clip.wav [--name thinking]` ([integration.md](integration.md#1-unified-cli-default)).
+
+Errors arrive before any audio plays:
+
+| Status | `error` | When |
+| --- | --- | --- |
+| `400` | `name must be talking, typing, reading, thinking or none` | `{name}` is unknown or has its own sound |
+| `415` | `expected 16-bit mono PCM at 22050 Hz` | WAV format or sample rate differs |
+| `415` | `not a WAV file`, `no audio data` | Body is not a RIFF/WAVE file, or has no `data` chunk |
 
 ## Errors
 
 | Status | Body | When |
 | --- | --- | --- |
-| `400` | `{"ok":false,"error":"..."}` | Bad `/test/servo`, `/setup/servo`, `/setup/led`, `/setup/audio`, `/setup/oled`, or `/anim` params (see tables above) |
+| `400` | `{"ok":false,"error":"..."}` | Bad body or fields on `/settings`, `/settings/wifi`, `/test/servo` or `/setup/*`, or bad `/anim` or `/play` params (see tables above) |
 | `401` | `{"ok":false,"error":"unauthorized"}` | Access token configured and `Authorization: Bearer` missing or wrong |
 | `404` | `{"ok":false,"error":"not found"}` | Unknown path |
-| `405` | `{"ok":false,"error":"method not allowed"}` | Wrong method on a `/test/*`, `/setup/servo`, `/setup/led`, `/setup/audio`, `/setup/oled`, `/settings`, `/settings/reset`, `/anim`, or `/auth` path |
+| `415` | `{"ok":false,"error":"..."}` | `/play` body is not a supported WAV |
+| `405` | `{"ok":false,"error":"method not allowed"}` | Wrong method on any known path, web panel pages included |
 
 Test routes are **POST**. GET/prefetch would move hardware. `/anim` allows **GET** (read) and **POST** (set). `/auth` is **GET** only and always public.
 
@@ -515,11 +745,13 @@ Test routes are **POST**. GET/prefetch would move hardware. `/anim` allows **GET
 
 Test handlers **block** until the test finishes. The client waits. After each test, OLED returns to `ROBOT READY` plus IP (or `WIFI FAIL`).
 
-`/anim` responses return immediately; typing motion runs in the main loop via non-blocking servo updates. Animation switches may defer up to 1s so the active animation holds its minimum duration; only the latest pending request is applied. Continuous animations (`typing`, `reading`, `thinking`) that stay active longer than `continuous_timeout` minutes switch to `attention`, which holds ~1 minute then finishes to `none`. Re-`POST`ing the same continuous animation (e.g. `typing` while already `typing`) does not restart motion, but resets the continuous-timeout clock.
+`/anim` responses return immediately; typing motion runs in the main loop via non-blocking servo updates. Animation switches may defer up to 1s so the active animation holds its minimum duration; only the latest pending request is applied. Continuous animations (`typing`, `reading`, `thinking`, `talking`) that stay active longer than `continuous_timeout` minutes switch to `attention`, which holds ~1 minute then finishes to `none`. Re-`POST`ing the same continuous animation (e.g. `typing` while already `typing`) does not restart motion, but resets the continuous-timeout clock.
 
 The onboard RGB LED follows the active animation (see [RGB LED](#rgb-led)).
 
-One request at a time — the Arduino `WebServer` is single-threaded.
+`/play` holds the connection until the clip ends.
+
+One request at a time — the Arduino `WebServer` is single-threaded. While `/play` streams, other requests wait.
 
 ## RGB LED
 
@@ -527,7 +759,7 @@ Onboard WS2812 on **GPIO10** (`RGB_LED_PIN`). Byte order is the saved `rgb_order
 
 | Animation | LED color |
 | --- | --- |
-| `typing`, `reading`, `thinking`, `welcome`, `ring`, `wakeup` | White (full intensity) |
+| `typing`, `reading`, `thinking`, `talking`, `welcome`, `ring`, `wakeup` | White (full intensity) |
 | `attention`, `error`, `dead` | Red pulse: 500 ms 10%→100%, 500 ms hold 100%, 500 ms 100%→10%, repeat |
 | `abort` | Red (full intensity, solid) |
 | `none`, `sleep` | Off |

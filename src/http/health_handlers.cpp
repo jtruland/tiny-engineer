@@ -1,84 +1,73 @@
-#include "http/health_handlers.h"
-
 #include <Arduino.h>
 #include <WiFi.h>
-#include <cstdio>
 
 #include "display/oled.h"
+#include "firmware_version.h"
 #include "hardware/chip_temp.h"
-#include "http/json.h"
-#include "http/server_context.h"
+#include "hardware/i2c_health.h"
+#include "http/handlers.h"
+#include "http/response.h"
 #include "network/wifi_connect.h"
 #include "settings/settings.h"
 
-void handleAuth() {
-  WebServer& server = httpServer();
-  char body[128];
+namespace {
 
-  snprintf(
-    body,
-    sizeof(body),
-    "{\"ok\":true,\"required\":%s,\"wifi_configured\":%s,\"provisioning\":%s}",
-    settingsAccessTokenSet() ? "true" : "false",
-    settingsWifiConfigured() ? "true" : "false",
-    wifiProvisioningMode() ? "true" : "false"
-  );
+void writeI2cDevice(JsonObject out, const I2cDeviceHealth& device) {
+  out["ok"] = device.ok;
+  out["faults"] = device.faults;
+  out["recoveries"] = device.recoveries;
+  out["last_fault_ms"] = device.lastFaultMs;
+}
 
-  httpSendJson(server, 200, body);
+}  // namespace
+
+void handleAuth(WebServer& server) {
+  JsonDocument body;
+  body["ok"] = true;
+  body["version"] = FW_VERSION;
+  body["required"] = settingsAccessTokenSet();
+  body["wifi_configured"] = settingsWifiConfigured();
+  body["link_mode"] = settingsLinkMode();
+  body["provisioning"] = wifiProvisioningMode();
+  sendJson(server, 200, body);
 }
 
 void handleHealth(WebServer& server) {
-  const bool wifiOk =
-    WiFi.status() == WL_CONNECTED;
+  const bool connected = WiFi.status() == WL_CONNECTED;
+  const bool provisioning = wifiProvisioningMode();
+  JsonDocument body;
 
-  refreshMdnsHostname();
+  body["ok"] = true;
+  body["version"] = FW_VERSION;
+  body["uptime_ms"] = millis();
+  body["free_heap"] = ESP.getFreeHeap();
+  body["heap_size"] = ESP.getHeapSize();
 
   float tempC = 0.0f;
-  const bool tempOk = chipTempCelsius(&tempC);
-  char tempFrag[24];
-  if (tempOk) {
-    snprintf(tempFrag, sizeof(tempFrag), "%.1f", tempC);
+
+  if (chipTempCelsius(&tempC)) {
+    body["cpu_temp_c"] = serialized(String(tempC, 1));
   } else {
-    snprintf(tempFrag, sizeof(tempFrag), "null");
+    body["cpu_temp_c"] = nullptr;
   }
 
-  char body[512];
+  JsonObject wifi = body["wifi"].to<JsonObject>();
+  wifi["connected"] = connected;
+  wifi["ip"] = connected ? wifiIpText() : "";
+  wifi["rssi"] = connected ? WiFi.RSSI() : 0;
+  wifi["hostname"] = wifiMdnsHostname();
 
-  snprintf(
-    body,
-    sizeof(body),
-    "{"
-    "\"ok\":true,"
-    "\"uptime_ms\":%lu,"
-    "\"free_heap\":%u,"
-    "\"heap_size\":%u,"
-    "\"cpu_temp_c\":%s,"
-    "\"wifi\":{"
-    "\"connected\":%s,"
-    "\"ip\":\"%s\","
-    "\"rssi\":%d,"
-    "\"hostname\":\"%s\""
-    "},"
-    "\"wifi_configured\":%s,"
-    "\"provisioning\":%s,"
-    "\"setup_ap_ssid\":\"%s\","
-    "\"setup_ap_ip\":\"%s\","
-    "\"oled\":%s"
-    "}",
-    (unsigned long)millis(),
-    (unsigned)ESP.getFreeHeap(),
-    (unsigned)ESP.getHeapSize(),
-    tempFrag,
-    wifiOk ? "true" : "false",
-    wifiOk ? wifiIpText() : "",
-    wifiOk ? (int)WiFi.RSSI() : 0,
-    httpMdnsHostname(),
-    settingsWifiConfigured() ? "true" : "false",
-    wifiProvisioningMode() ? "true" : "false",
-    wifiProvisioningMode() ? wifiApSsid() : "",
-    wifiProvisioningMode() ? wifiApIpText() : "",
-    oledAvailable ? "true" : "false"
-  );
+  body["wifi_configured"] = settingsWifiConfigured();
+  body["link_mode"] = settingsLinkMode();
+  body["provisioning"] = provisioning;
+  body["setup_ap_ssid"] = provisioning ? wifiApSsid() : "";
+  body["setup_ap_ip"] = provisioning ? wifiApIpText() : "";
+  body["oled"] = oledAvailable;
 
-  httpSendJson(server, 200, body);
+  const I2cHealth bus = i2cHealth();
+  JsonObject i2c = body["i2c"].to<JsonObject>();
+  i2c["ok"] = bus.ok;
+  writeI2cDevice(i2c["pca9685"].to<JsonObject>(), bus.servoDriver);
+  writeI2cDevice(i2c["oled"].to<JsonObject>(), bus.oled);
+  sendJson(server, 200, body);
 }

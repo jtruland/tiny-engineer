@@ -1,6 +1,6 @@
 # Parametric design (different servo sizes)
 
-[`3d_models/cad/TinyEngineer.f3d`](../../3d_models/cad/TinyEngineer.f3d) is the parametric Fusion source for the robot. Printed pockets, mounting tabs, and shaft clearance are driven by Fusion **user parameters**. Change those values and the assembly rebuilds for a different micro servo.
+[`3d_models/cad/TinyEngineer.f3d`](../../3d_models/cad/TinyEngineer.f3d) is the parametric Fusion source for the robot. Printed pockets, mounting tabs, shaft clearance, and M2 screw pilots are driven by Fusion **user parameters**. Change those values and the assembly rebuilds for a different micro servo or a tighter/looser screw fit.
 
 Presets live in [`servos.json`](../../3d_models/fusion/TinyEngineerTools/servos.json). **TinyEngineer Tools** writes them into the `.f3d`, then exports print meshes under `parts/{servo_id}/3mf/` (and matching `stl/`) plus STEP CAD under `parts/{servo_id}/step/`.
 
@@ -19,15 +19,18 @@ Servo size sets the size of the **whole robot**. Desk, chair, body, and pockets 
 
 Built-in presets in [`servos.json`](../../3d_models/fusion/TinyEngineerTools/servos.json):
 
-| Model | `servo_id` | When to use |
-| --- | --- | --- |
-| **Tower Pro SG90** (recommended) | `sg90` | Easiest to buy. Bigger desk — electronics are easier to fit and assemble. |
-| **Feetech FS0307** | `fs0307` | More compact. Looks better if you want a smaller robot. |
-| **PowerHD HD-1370A** | `hd1370a` | Still supported for backward compatibility. Not the pick for a new build. |
+Assembled outer size is **height × width × depth** (H×W×D), not L×W×H.
+
+| Model | `servo_id` | Assembled size (approx. H×W×D) | When to use |
+| --- | --- | --- | --- |
+| **Tower Pro SG90** (recommended) | `sg90` | ~13 × 15 × 12 cm | Easy to find. Bigger desk — electronics are easier to fit and assemble. |
+| **Feetech FS0307** | `fs0307` | ~11 × 13 × 10 cm | Compact. Less common than SG90 — one of two similar-size alternatives. |
+| **EMAX ES9051** | `es9051` | ~11 × 13 × 10 cm | Compact alternative to FS0307 (similar footprint, slightly taller). |
+| **PowerHD HD-1370A** | `hd1370a` | — | Still supported for backward compatibility. Not the pick for a new build. |
 
 A non-standard servo is fine: measure it, add a preset, run the configurator ([Add a new servo](#add-a-new-servo)). Print parts that match that `servo_id`.
 
-Print matching `parts/{servo_id}/3mf/`: [`sg90`](../../3d_models/parts/sg90/3mf/), [`fs0307`](../../3d_models/parts/fs0307/3mf/), [`hd1370a`](../../3d_models/parts/hd1370a/3mf/).
+Print matching `parts/{servo_id}/3mf/`: [`sg90`](../../3d_models/parts/sg90/3mf/), [`fs0307`](../../3d_models/parts/fs0307/3mf/), [`es9051`](../../3d_models/parts/es9051/3mf/), [`hd1370a`](../../3d_models/parts/hd1370a/3mf/).
 
 ## Servo parameters
 
@@ -75,11 +78,46 @@ Each preset in `servos.json` is a map of Fusion user-parameter names to expressi
 
 | Parameter | Meaning |
 | --- | --- |
-| `servo_id` | Short lowercase folder id (`hd1370a`, `fs0307`, `sg90`). The configurator writes it; the exporter uses it. |
+| `servo_id` | Short lowercase folder id (`hd1370a`, `fs0307`, `sg90`, `es9051`). The configurator writes it; the exporter uses it. |
+
+## M2 screw holes
+
+Assembly uses **M2 screws** that thread directly into the printed PLA/PETG (no heat-set inserts). Pilot-hole size is a Fusion **user parameter**, not a servo preset:
+
+| Parameter | Meaning |
+| --- | --- |
+| `screw_thread_diameter` | Modeled diameter of M2 screw pilot holes in the printed parts. |
+
+Related (usually leave alone): `screw_head_diameter`, `screw_head_height` — countersink / head clearance for the same fasteners.
+
+`screw_thread_diameter` is **not** in [`servos.json`](../../3d_models/fusion/TinyEngineerTools/servos.json). Change it in Fusion (**Modify → Change Parameters**), then run **Tiny Engineer Parts Exporter** again.
+
+### Why dial it in
+
+Print tolerances vary by printer, material, and slicer. FDM holes often print smaller than modeled, so the CAD default is slightly oversized relative to an M2 major diameter (~2.0 mm). On some printers the hole still comes out large enough that the screw **slides through** instead of cutting a thread — mounting gets loose.
+
+### Use `ScrewSizingTest` first
+
+1. Print [`ScrewSizingTest.3mf`](../../3d_models/README.md#print-first) from your `parts/{servo_id}/3mf/` folder (quick, small).
+2. Each hole is labeled with its diameter (about **2.00–2.40 mm** in **0.05 mm** steps).
+3. Drive an M2 screw into each hole. Prefer the **tightest** hole that still lets the screw cut a clean thread (firm bite, not free-spinning, not so tight you strip the plastic).
+4. Set `screw_thread_diameter` to that labeled value and re-export before printing the full set.
+
+Print [`ServoSizingTester`](../../3d_models/README.md#print-first) in the same “print first” pass for servo pocket fit.
+
+### Recommended / tested values
+
+| Value | When |
+| --- | --- |
+| **2.1 mm** | CAD default and shipped `parts/*/3mf/` exports. Tested path on a **Creality Ender 3 V3 SE**, PLA, ~0.16 mm layer height ([printing notes](../hardware-for-software-engineers/06-3d-printing-and-mechanical-build.md)). |
+| Smaller (e.g. 2.05–2.15 mm) | Pilot too tight to start a thread without cracking — pick from `ScrewSizingTest`. |
+| Larger (e.g. 2.25–2.35 mm) | Screws feel loose / slide through on your printer — pick from `ScrewSizingTest`. |
+
+Always trust **your** `ScrewSizingTest` result over the table if they disagree.
 
 ## TinyEngineer Tools add-in
 
-**TinyEngineer Tools** is a Fusion add-in for [`cad/TinyEngineer.f3d`](../../3d_models/cad/TinyEngineer.f3d). It writes servo dimensions from [`TinyEngineerTools/servos.json`](../../3d_models/fusion/TinyEngineerTools/servos.json) into Fusion user parameters, and exports each `PRINT_LAYOUT` child as a `.3mf` and binary `.stl` mesh plus a `.step` CAD file (PRINT_LAYOUT with one child visible, so captured print pose stays). STL/3MF use Save as Mesh; STEP uses File → Export.
+**TinyEngineer Tools** is a Fusion add-in for [`cad/TinyEngineer.f3d`](../../3d_models/cad/TinyEngineer.f3d). It writes servo dimensions from [`TinyEngineerTools/servos.json`](../../3d_models/fusion/TinyEngineerTools/servos.json) into Fusion user parameters, and exports selected `PRINT_LAYOUT` children as `.3mf` / binary `.stl` / `.step` (PRINT_LAYOUT with one child visible, so captured print pose stays). STL/3MF use Save as Mesh; STEP uses File → Export.
 
 Fusion must know about the add-in folder. Folder name, `TinyEngineerTools.py`, and `TinyEngineerTools.manifest` must stay the same.
 
@@ -105,30 +143,32 @@ Open [`cad/TinyEngineer.f3d`](../../3d_models/cad/TinyEngineer.f3d) and stay in 
 
 Select a servo model and apply dimensions, including `servo_id` (short lowercase id such as `sg90`).
 
-The command reads [`servos.json`](../../3d_models/fusion/TinyEngineerTools/servos.json), previews the values, and writes them into the design’s user parameters. Apply a servo before exporting.
+The command reads [`servos.json`](../../3d_models/fusion/TinyEngineerTools/servos.json), previews the values, and writes them into the design’s user parameters. Use this to preview a preset in the open design; Parts Exporter can also apply selected servos during export.
 
 #### Tiny Engineer Parts Exporter
 
-Choose an export folder.
+A command dialog asks what to export (all checkboxes **on** by default):
 
-The add-in finds the `PRINT_LAYOUT` component and exports each of its direct child components separately. For each child, it temporarily hides the others, keeps that child visible in its saved print orientation, and exports the full PRINT_LAYOUT as:
+* **Servos** — each preset in [`servos.json`](../../3d_models/fusion/TinyEngineerTools/servos.json)
+* **Parts** — each direct `PRINT_LAYOUT` child in a scrollable table, with **Select all** / **Deselect all**
+* **Formats** — `3MF`, `STL`, `STEP`
 
-* `{servo_id}/3mf/{name}.3mf`
-* `{servo_id}/stl/{name}.stl` in binary STL format
-* `{servo_id}/step/{name}.step` as STEP CAD (File → Export, not Save as Mesh)
+Then choose an export folder.
+
+For each selected servo the add-in applies that preset’s parameters, then exports each selected part separately. For each part it temporarily hides the others, keeps that child visible in its saved print orientation, and writes the checked formats under that servo’s folder:
+
+* `{servo_id}/3mf/{name}.3mf` (if 3MF selected)
+* `{servo_id}/stl/{name}.stl` binary STL (if STL selected)
+* `{servo_id}/step/{name}.step` STEP CAD via File → Export (if STEP selected)
 * `{servo_id}/README.md` with that servo’s parameters from `servos.json`
 
-`servo_id` comes from the Fusion parameter set by Servo Configurator. Apply a servo before exporting.
-
-In that way, each component is exported as a separate file, all keeping their captured print orientation.
-
-After all components are exported, the original visibility settings are restored. A progress dialog stays up during the run so Fusion can paint; Cancel stops after the current part.
+After the run, visibility and the design’s previous servo parameters are restored. A progress dialog stays up so Fusion can paint; Cancel stops after the current part.
 
 ## Add a new servo
 
 1. Measure a real unit (prefer calipers over datasheet marketing sizes).
 2. Copy an existing object in [`servos.json`](../../3d_models/fusion/TinyEngineerTools/servos.json); keep the same keys; set a unique `servo_id`.
 3. Reload the add-in, run Servo Configurator, confirm Fusion parameters update.
-4. Print [`ServoSizingTester`](../../3d_models/README.md#print-first) first, then export.
+4. Print [`ServoSizingTester`](../../3d_models/README.md#print-first) and [`ScrewSizingTest`](../../3d_models/README.md#print-first) first (servo pocket + M2 pilot), then export.
 
 The configurator refuses unknown Fusion parameter names. Do not invent keys that are not already user parameters in the `.f3d`.

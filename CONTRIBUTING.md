@@ -7,11 +7,16 @@ This is a desk robot: firmware on an ESP32-C3, 3D-printed mechanics, and HTTP cl
 ## Ways to help
 
 - Firmware (`src/`, `include/`, `lib/`, `data/`)
-- Integrations: Cursor hooks, Antigravity CLI, or any REST client ([docs/integration.md](docs/integration.md))
+- Integrations: Cursor hooks, Antigravity CLI, Claude Code hooks, or any REST client ([docs/integration.md](docs/integration.md))
 - Docs, wiring, BOM corrections
 - CAD / printables (`3d_models/`)
+- Optional mods (`mods/`)
 - KiCad PCB boards (`hardware/boards/` — [docs/pcb.md](docs/pcb.md))
 - Photos of a working build or a failure (brownout, binding, blink codes)
+
+## Share your build
+
+Finished a Tiny Engineer? Post photos (or a short clip) in **[Show and tell](https://github.com/jamro/tiny-engineer/discussions/categories/show-and-tell)** on GitHub Discussions. Mention mods, servo size, or which agent you hooked up. The README links there instead of listing builds in-repo.
 
 ## Legal
 
@@ -21,11 +26,12 @@ Opening a PR licenses your change under the license of the files you touch. No C
 | --- | --- |
 | Firmware, packages, scripts, docs | [MIT](LICENSE) — see [LICENSING.md](LICENSING.md) |
 | `3d_models/cad/`, `3d_models/parts/` | [CERN-OHL-S-2.0](3d_models/LICENSE) |
+| `mods/*/3d_models/cad/`, `mods/*/3d_models/parts/` | [CERN-OHL-S-2.0](3d_models/LICENSE) |
 | `hardware/boards/` | [CERN-OHL-S-2.0](hardware/LICENSE) |
 
-If you modify the hardware designs and distribute Products based on them, CERN-OHL-S-2.0 requires you to make the Complete Source available under the same license. Keep [3d_models/NOTICE](3d_models/NOTICE) and [hardware/NOTICE](hardware/NOTICE) Source Location accurate for the revision you ship.
+If you modify the hardware designs and distribute Products based on them, CERN-OHL-S-2.0 requires you to make the Complete Source available under the same license. Keep [3d_models/NOTICE](3d_models/NOTICE) and [hardware/NOTICE](hardware/NOTICE) Source Location accurate for the revision you ship. For a mod product, the Source Location is that mod’s `3d_models` tree ([mods/README.md](mods/README.md)).
 
-The **Tiny Engineer** name, logo, and [`3d_models/parts/AiEmblem.3mf`](3d_models/parts/AiEmblem.3mf) are **not** licensed. Factual “based on Tiny Engineer” is fine. Do not imply an official product. Details: [TRADEMARK.md](TRADEMARK.md).
+The **Tiny Engineer** name, logo, and [`3d_models/parts/sg90/3mf/AiEmblem.3mf`](3d_models/parts/sg90/3mf/AiEmblem.3mf) are **not** licensed. Factual “based on Tiny Engineer” is fine. Do not imply an official product. Details: [TRADEMARK.md](TRADEMARK.md).
 
 New hardware paths need a matching `[[annotations]]` block in [REUSE.toml](REUSE.toml).
 
@@ -37,26 +43,34 @@ PlatformIO from the repo root. Node 18+ for packages. GitHub Actions on `main` a
 
 ```bash
 pio run
+pio run -e expression-demo
 pio test -e native
+node scripts/expressions/generate.js --check
+node scripts/expressions/test-assets.js
+npm test --prefix packages/tiny-engineer-cli
 npm test --prefix packages/tiny-engineer-cursor
 npm test --prefix packages/tiny-engineer-antigravity
+npm test --prefix packages/tiny-engineer-claude-code
+python3 scripts/check_pcb.py
 ```
 
-`pio test -e native` is not `pio run -e native`. Details: [docs/testing.md](docs/testing.md). Flash locally with `pio run -t upload` when you have a board. Physical module is a **Waveshare ESP32-C3-Zero**; PlatformIO `board = esp32-c3-devkitm-1` is the build target name.
+`pio test -e native` is not `pio run -e native`. PCB checks need KiCad 10 (`python3 scripts/check_pcb.py`). Details: [docs/testing.md](docs/testing.md). Flash locally with `pio run -t upload` when you have a board. Physical module is a **Waveshare ESP32-C3-Zero**; PlatformIO `board = esp32-c3-devkitm-1` is the build target name.
 
 ## By change type
 
 **Firmware.** `pio run` plus native tests when you touch settings validation. Pin changes update [`include/pins.h`](include/pins.h) **and** [`docs/hardware/`](docs/hardware/) in the same PR.
 
-**HTTP / API.** Same PR must update the HTML index ([`src/http/index_page.cpp`](src/http/index_page.cpp)) and [`docs/api.md`](docs/api.md). If the route list, params, or boot URLs changed, also update [`README.md`](README.md) and [`docs/hardware/testing.md`](docs/hardware/testing.md). See [.cursor/rules/sync-api-endpoints.mdc](.cursor/rules/sync-api-endpoints.mdc).
+**HTTP / API.** Same PR must update the web UI API page ([`ui/src/views/ApiReference.tsx`](ui/src/views/ApiReference.tsx)) and [`docs/api.md`](docs/api.md). If the route list, params, or boot URLs changed, also update [`README.md`](README.md) and [`docs/hardware/testing.md`](docs/hardware/testing.md). See [.cursor/rules/sync-api-endpoints.mdc](.cursor/rules/sync-api-endpoints.mdc).
 
 **Settings.** Follow the layer checklist in [docs/settings.md](docs/settings.md). Never log the raw `access_token` (set/unset only).
 
 **Integrations.** Add or extend tests in the package you change. Raw REST examples belong in [docs/integration.md](docs/integration.md). Prefer short timeouts and ignore network errors so a missing robot does not stall the agent.
 
-**CAD.** Edit [`3d_models/cad/TinyEngineer.f3d`](3d_models/cad/TinyEngineer.f3d) **and** export the affected [`3d_models/parts/{servo_id}/3mf/*.3mf`](3d_models/parts/). Keep CERN-OHL-S. Do not swap `AiEmblem.3mf` as a branding change.
+**CAD.** **Start a GitHub Discussion before modifying CAD files**, as they are difficult to merge. After discussion, edit [`3d_models/cad/TinyEngineer.f3d`](3d_models/cad/TinyEngineer.f3d) **and** export the affected [`3d_models/parts/{servo_id}/3mf/*.3mf`](3d_models/parts/). Keep CERN-OHL-S. Do not swap `AiEmblem.3mf` as a branding change. New parts: [docs/3d/adding-parts.md](docs/3d/adding-parts.md). Servo presets / add-in: [docs/3d/parametric-design.md](docs/3d/parametric-design.md).
 
-**PCB.** Follow the [PCB checklist](docs/pcb.md#checklist). Keep [`expected-nets.yml`](docs/pcb.md#expected-netsyml) in sync. One board per `hardware/boards/<name>/`, KiCad 10, ERC and DRC reviewed, no generated Gerbers or other fab outputs. Keep CERN-OHL-S. New board paths need a matching `[[annotations]]` block in [REUSE.toml](REUSE.toml).
+**Mods.** Optional add-ons under [`mods/<mod_name>/`](mods/README.md). Models live in `3d_models/{cad,parts}/`; other files sit beside that folder. Commit as `type(mods)` and name the mod in the summary. Do not add a scope per mod. `feat(mods)` / `fix(mods)` do not version the stock CAD revision.
+
+**PCB.** Follow the [PCB checklist](docs/pcb.md#checklist). Run `python3 scripts/check_pcb.py` before opening a PCB PR. Keep [`expected-nets.yml`](docs/pcb.md#expected-netsyml) in sync. One board per `hardware/boards/<name>/`, KiCad 10, ERC and DRC reviewed, no generated Gerbers or other fab outputs. Keep CERN-OHL-S. New board paths need a matching `[[annotations]]` block in [REUSE.toml](REUSE.toml).
 
 **Motion.** Animations use −1..1 poses mapped to the saved min/max in [docs/robot-movement.md](docs/robot-movement.md). Stock defaults live in [`include/servos.h`](include/servos.h). Do not widen NVS servo clamps without testing on a real robot. Setup AP `POST /setup/servo` can use 0–180° to find limits; assembled motion must not.
 
@@ -84,13 +98,27 @@ Format: `type(scope): summary`
 | `feat!:` / `fix!:` or footer `BREAKING CHANGE:` | MAJOR |
 | `docs`, `style`, `test`, `chore`, `ci`, `refactor` (unless breaking) | no bump |
 
-Scopes: `firmware`, `http`, `settings`, `anim`, `servos`, `wifi`, `integrations`, `cad`, `pcb`, `docs`, `scripts`, `ci`.
+Scopes: `firmware`, `http`, `settings`, `anim`, `servos`, `wifi`, `integrations`, `cad`, `mods`, `pcb`, `docs`, `scripts`, `ci`, `web`, `cli`.
 
 `integrations` is anything under `packages/` (Cursor, Antigravity, Claude Code, later agent CLIs). Do not add a new scope per package.
 
+`mods` is anything under `mods/`. Name the mod in the summary. Do not add a new scope per mod.
+
 **Breaking in this repo** means: removed or renamed HTTP route or query param; NVS key rename that drops existing settings; pinout change; default servo range change that invalidates calibration; hook CLI flag or event rename. Call it out with `!` on the type and a `BREAKING CHANGE:` footer.
 
-CAD-only `feat(cad)` / `fix(cad)` and PCB-only `feat(pcb)` / `fix(pcb)` version the hardware design, not the npm packages.
+CAD-only `feat(cad)` / `fix(cad)` and PCB-only `feat(pcb)` / `fix(pcb)` version the hardware design, not the npm packages. `feat(mods)` / `fix(mods)` do not version the stock CAD revision. Promoting a mod into stock `cad/` and `parts/` is `feat(cad)`.
+
+### Firmware version string
+
+Robot builds bake `git describe --tags --always --dirty` into `FW_VERSION` via [`scripts/firmware_version.py`](scripts/firmware_version.py) (env `esp32-c3-devkitm-1` only). The string appears on the serial banner (when `serial_log` is on), in `GET /health` as `version`, and in the web UI.
+
+- Tagged release, clean tree: exact tag (`v0.1.0`)
+- Dev build: `v0.1.0-<n>-g<sha>` (optional `-dirty`)
+- No git metadata: `unknown`
+
+A firmware tag does not bump the npm packages. Publish the host CLI (`tiny-engineer` on npm) with a separate SemVer and checklist: [docs/cli-release.md](docs/cli-release.md). CI (`.github/workflows/ci.yml`) builds with full git history and uploads `bootloader.bin`, `partitions.bin`, `firmware.bin`, and `littlefs.bin` as the `firmware-<sha>` Actions artifact on every PR and `main` push. Pushing a tag matching `v*` runs `.github/workflows/release.yml`, which attaches the same four bins as `tiny-engineer-<tag>-{bootloader,partitions,firmware,littlefs}.bin` plus a stable-name `manifest.json` (offsets from that tag’s `partitions.csv`). Pages deploy (`.github/workflows/pages.yml`) mirrors those assets via `scripts/build_flash_catalog.py` so the web flasher can install same-origin (Release CDN blocks browser CORS).
+
+Public site UI lives under [`web/`](web/) (GitHub Pages via `.github/workflows/pages.yml`). Follow [`web/STYLE.md`](web/STYLE.md) for visual changes.
 
 Examples:
 
@@ -98,6 +126,7 @@ Examples:
 feat(anim): add dead pose
 feat(integrations): add Claude Code hooks CLI
 fix(cad): add screw hole to desk pad
+feat(mods): add desk clamp
 feat(pcb): add controller board
 feat(http)!: drop query alias on /anim
 

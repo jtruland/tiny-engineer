@@ -1,0 +1,42 @@
+{
+  "name": "tiny-engineer-ui",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest run",
+    "lint": "tsc && eslint . && stylelint \"src/**/*.css\" && prettier --check .",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "@eslint-react/eslint-plugin": "^5.26.0",
+    "@eslint/js": "^10.0.1",
+    "@preact/preset-vite": "^2.10.6",
+    "@stylistic/eslint-plugin": "^5.10.0",
+    "@testing-library/preact": "^3.2.4",
+    "@testing-library/user-event": "^14.6.7",
+    "@types/node": "^24.19.2",
+    "eslint": "^10.12.0",
+    "eslint-plugin-promise": "^7.3.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.13.0",
+    "jsdom": "^29.1.1",
+    "prettier": "^3.9.9",
+    "stylelint": "^17.16.0",
+    "stylelint-config-standard": "^40.0.0",
+    "typescript": "~6.0",
+    "typescript-eslint": "^8.71.1",
+    "vite": "^8.3.3",
+    "vite-plugin-singlefile": "^2.3.3",
+    "vitest": "^5.0.3"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "preact": "~10.29.8",
+    "wouter-preact": "^3.13.0"
+  }
+}

@@ -4,7 +4,11 @@
 #include <LittleFS.h>
 #include <math.h>
 
+#include "animation.h"
+#include "api/busy.h"
+#include "audio/audio_cues.h"
 #include "audio/wav_stream.h"
+#include "extensions/push_button_sfx.h"
 #include "pins.h"
 #include "display/oled.h"
 #include "settings/settings.h"
@@ -91,7 +95,41 @@ bool initAudioStorage() {
     }
   }
 
+  loadAudioCues();
   return true;
+}
+
+void writeMonoToSpeaker(const int16_t* samples, size_t count) {
+  constexpr size_t FRAMES = 256;
+
+  int16_t buffer[FRAMES * 2];
+
+  const uint8_t volume = settingsVolume();
+
+  while (count > 0) {
+    const size_t framesThisTime = count < FRAMES ? count : FRAMES;
+
+    for (size_t i = 0; i < framesThisTime; i++) {
+      int32_t scaled = (static_cast<int32_t>(samples[i]) * volume) / 100;
+
+      if (scaled > 32767) {
+        scaled = 32767;
+      } else if (scaled < -32768) {
+        scaled = -32768;
+      }
+
+      buffer[i * 2] = static_cast<int16_t>(scaled);
+      buffer[i * 2 + 1] = static_cast<int16_t>(scaled);
+    }
+
+    I2S.write(
+      reinterpret_cast<uint8_t*>(buffer),
+      framesThisTime * 2 * sizeof(int16_t)
+    );
+
+    samples += framesThisTime;
+    count -= framesThisTime;
+  }
 }
 
 void playTone(
@@ -181,6 +219,18 @@ void stopAllWavPlayback() {
   wavStreamStop();
 }
 
+bool tryStartButtonEventSound(const char* sound) {
+  const ButtonSfxClip sfx = parseButtonSfx(sound);
+  const bool animOwnsActive =
+    wavStreamIsActive() && animationDrivesWavStream(getAnimation());
+  if (!shouldStartButtonSfx(sfx, apiBusyHeld(), animOwnsActive)) {
+    return false;
+  }
+
+  const WavClip clip = sfx == ButtonSfxClip::Bell ? WavClip::Bell : WavClip::Click;
+  return wavStreamStart(clip);
+}
+
 void stopBellPlayback() {
   wavStreamStop();
 }
@@ -198,6 +248,10 @@ void stopErrorPlayback() {
 }
 
 void stopAbortPlayback() {
+  wavStreamStop();
+}
+
+void stopDeadPlayback() {
   wavStreamStop();
 }
 
@@ -221,6 +275,10 @@ bool startAbortPlayback() {
   return wavStreamStart(WavClip::Abort);
 }
 
+bool startDeadPlayback() {
+  return wavStreamStart(WavClip::Dead);
+}
+
 bool updateBellPlayback() {
   return wavStreamUpdate();
 }
@@ -238,6 +296,10 @@ bool updateErrorPlayback() {
 }
 
 bool updateAbortPlayback() {
+  return wavStreamUpdate();
+}
+
+bool updateDeadPlayback() {
   return wavStreamUpdate();
 }
 
@@ -259,6 +321,10 @@ bool playError() {
 
 bool playAbort() {
   return playWavBlocking(WavClip::Abort, "Playing...");
+}
+
+bool playDead() {
+  return playWavBlocking(WavClip::Dead, "Playing...");
 }
 
 void runSoundTest() {

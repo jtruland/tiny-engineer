@@ -11,7 +11,7 @@ You don't need an oscilloscope to do useful hardware. You need patience, a multi
 | **Multimeter** | DC voltage, continuity beep |
 | **USB cable (data)** | Charge-only cables cause "upload failed" existential crisis |
 | **5 V / ≥ 2 A supply** | Known-good power |
-| **Screwdrivers** | 2 mm screws, horn screws |
+| **Screwdrivers** | M2 screws, horn screws |
 | **Soldering iron** (optional) | If your wiring isn't all Dupont |
 | **Zip ties / tape** | Strain relief |
 
@@ -43,7 +43,7 @@ pio device monitor
 
 > **If you've written backend code…** Serial is structured logging before structured logging existed on the device. Read it before guessing.
 
-Upload and monitor details: [getting-started.md § Flash](../getting-started.md#4-flash).
+Upload and monitor details: [flash.md](../flash.md).
 
 ---
 
@@ -73,7 +73,7 @@ Don't assemble everything, power on, and hope. **Bisect** like a failing integra
 | --- | --- |
 | 1. USB power only | ESP32 boots, serial output, dim green LED |
 | 2. + I2C (PCA9685, OLED) | Serial lists devices; PCA9685 required |
-| 3. + one servo on ch 0 | `/test/servo?index=0&angle=90` moves it |
+| 3. + one servo on ch 0 | `POST /test/servo` with `{"index":0,"angle":90}` moves it |
 | 4. + all servos | Each channel, safe ranges |
 | 5. + I2S amp + speaker | Audio test endpoint or animation with sound |
 | 6. + mechanical shell | Range of motion, no binding |
@@ -86,7 +86,7 @@ Failure table and expected boot sequence: [testing.md](../hardware/testing.md).
 
 Once on Wi-Fi, the robot exposes **integration-test-style endpoints**:
 
-- `/health` — alive, CPU temp
+- `/health` — alive, CPU temp, I2C fault and recovery counts
 - `/test/servo` — single joint
 - Web UI — hardware tests without memorizing curl
 
@@ -130,7 +130,7 @@ When two things changed, revert one. Hardware debugging punishes batch changes l
 
 ## When things are "done enough"
 
-You're ready for [getting-started.md § Prove it](../getting-started.md#6-prove-it) and agent hooks when:
+You're ready for [getting-started.md § Prove it](../getting-started.md#7-prove-it) and agent hooks when:
 
 - `/health` returns OK on Wi-Fi
 - Each servo sweeps inside safe range without buzzing

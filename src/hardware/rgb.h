@@ -17,7 +17,8 @@ void rgbSetupHoldLogical(uint8_t r, uint8_t g, uint8_t b, const char* order);
 void rgbSetupRelease();
 
 // Blinks red `blinks` times, pauses, and repeats forever. Never returns.
-[[noreturn]] void haltWithRgbCode(uint8_t blinks);
+// Always prints `reason` on Serial once (ignores serial_log).
+[[noreturn]] void haltWithRgbCode(uint8_t blinks, const char* reason);
 void setRgbForAnimation(AnimationId id, uint32_t nowMs);
 void updateRgb(uint32_t nowMs);
 void runRgbTest();

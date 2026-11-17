@@ -1,4 +1,4 @@
-# AGENTS.md
+# CLAUDE.md
 
 Tool-agnostic brief for coding agents working **on this repository**.
 
@@ -11,8 +11,11 @@ Tiny Engineer is an open-source ESP32-C3 Wi-Fi desk robot: 3D-printed mechanics,
 | Path | Role |
 | --- | --- |
 | `src/`, `include/`, `lib/`, `data/` | Firmware (PlatformIO) |
-| `packages/` | HTTP / hook CLIs (Cursor, Antigravity, …) — scope `integrations` |
+| `ui/` | Web control panel (Vite, TypeScript, Preact); `pio run` builds it into one minified page and embeds it gzipped in the firmware |
+| `packages/` | HTTP / hook CLIs (Cursor, Antigravity, Claude Code, …) — scope `integrations` |
+| `skills/` | Agent skills shared by Claude Code, Cursor and Antigravity — scope `integrations` |
 | `3d_models/` | CAD and printables (CERN-OHL-S) |
+| `mods/` | Optional mods; models under `mods/<name>/3d_models/` (CERN-OHL-S) |
 | `hardware/` | KiCad boards (CERN-OHL-S) |
 | `docs/` | Human docs; depth lives here |
 
@@ -20,18 +23,32 @@ Physical module: **Waveshare ESP32-C3-Zero**. PlatformIO `board = esp32-c3-devki
 
 ## Commands
 
-From the repo root (Node 18+ for packages). Host only — CI never flashes.
+From the repo root (Node 18+ for packages, Node 20.19+ on 20.x or 22.12+ for `ui/` and therefore `pio run`). Host only — CI never flashes.
 
 ```bash
 pio run
+pio run -e expression-demo
 pio test -e native
+node scripts/expressions/generate.js --check
+node scripts/expressions/test-assets.js
+npm test --prefix packages/tiny-engineer-cli
 npm test --prefix packages/tiny-engineer-cursor
 npm test --prefix packages/tiny-engineer-antigravity
+npm test --prefix packages/tiny-engineer-claude-code
+npm run lint --prefix ui
+npm test --prefix ui
+python3 scripts/check_pcb.py
+python3 scripts/assembly/test_assembly.py
+python3 scripts/assembly/test_fasteners.py
+python3 scripts/assembly/test_boards.py
+node scripts/assembly/test_build_glb.mjs
+node scripts/assembly/test_viewer.mjs
+node scripts/assembly/test_clipping.mjs
 ```
 
-`pio test -e native` is not `pio run -e native`. Details: [docs/testing.md](docs/testing.md).
+`pio test -e native` is not `pio run -e native`. PCB checks need KiCad 10 (`python3 scripts/check_pcb.py`). The 3D assembly model needs Python 3.13 and `scripts/assembly/requirements.txt` ([docs/3d/assembly-viewer.md](docs/3d/assembly-viewer.md)). Details: [docs/testing.md](docs/testing.md).
 
-Do **not** flash (`pio run -t upload`) unless the user asks.
+Do **not** flash (`pio run -t upload`, `-t uploadfs`, `pio run -e ota -t upload`, `-t ota`, or `-t otafs`) unless the user asks.
 
 ## After significant changes
 
@@ -44,19 +61,20 @@ Significant: logic, types, APIs, headers, firmware under `src/` / `include/` / `
 
 When adding, removing, or changing method, path, or query params of any HTTP route, update in the **same** change:
 
-1. **HTML index** — [`src/http/index_page.cpp`](src/http/index_page.cpp): endpoint table and param lists for `/anim`, `/settings`, `/test/servo`
+1. **Web UI API page** — [`ui/src/views/ApiReference.tsx`](ui/src/views/ApiReference.tsx): endpoint table and param lists for `/anim`, `/settings`, `/test/servo`
 2. **API reference** — [`docs/api.md`](docs/api.md)
 3. **Summaries** — if the endpoint list, params, or boot URLs changed: [`README.md`](README.md) and [`docs/hardware/testing.md`](docs/hardware/testing.md)
-4. **405 paths** — if needed: `isHttpTestPath()` / `handleNotFound` in `src/http/`
+4. **Route table** — add the route to `kRoutes` in [`src/http/routes.cpp`](src/http/routes.cpp) with its access rule. 404 and 405 answers come from that table
 
-HTML index: one-line route descriptions only (except supported-parameter lists). Param values must match `docs/api.md` exactly.
+Web UI API page: one-line route descriptions only (except supported-parameter lists). Param values must match `docs/api.md` exactly.
 
 ## Commits
 
 Format: `type(scope): summary` (imperative, lowercase type, no trailing period; PR title same).
 
-Scopes: `firmware`, `http`, `settings`, `anim`, `servos`, `wifi`, `integrations`, `cad`, `pcb`, `docs`, `scripts`, `ci`.  
-`integrations` = anything under `packages/`. Do not add a new scope per package.
+Scopes: `firmware`, `http`, `settings`, `anim`, `servos`, `wifi`, `integrations`, `cad`, `mods`, `pcb`, `docs`, `scripts`, `ci`.  
+`integrations` = anything under `packages/` or `skills/`. Do not add a new scope per package.  
+`mods` = anything under `mods/`. Name the mod in the summary. Do not add a new scope per mod.
 
 Breaking rules, SemVer mapping, and examples: [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -64,9 +82,12 @@ Breaking rules, SemVer mapping, and examples: [CONTRIBUTING.md](CONTRIBUTING.md)
 
 - **Firmware** — `pio run`; also `pio test -e native` when touching settings validation. Pin changes update `include/pins.h` **and** `docs/hardware/` together.
 - **Settings** — layer checklist in [docs/settings.md](docs/settings.md). Never log raw `access_token`.
+- **HTTP routes** — add the route to `kRoutes` in `src/http/routes.cpp` with its `Access` level; `Refusal::check` enforces it. Routes with fields read a JSON body through `readJsonBody`; only `POST /anim` (`name`) and `/play` take other input, because the agent packages depend on them.
+- **Web UI** — Preact + TypeScript in `ui/src`, plain `preact` / `preact/hooks` imports (no compat). One component per file; shared components in `ui/src/components`, helpers in `ui/src/lib`. `npm run lint --prefix ui` runs `tsc` and type-checked ESLint, which forbids `.then` / `.catch` chains (use try/catch). Keep markup and class names when refactoring: the CSS styles them by class and id.
 - **Integrations** — add/extend package tests; prefer short timeouts and ignore network errors so a missing robot does not stall the agent.
-- **CAD** — edit `.f3d` **and** export affected `3mf`. CERN-OHL-S. Do not swap `AiEmblem.3mf` as branding.
-- **PCB** — [docs/pcb.md](docs/pcb.md) checklist + KiCad review rules below. New board paths need `REUSE.toml`. CERN-OHL-S.
+- **CAD** — edit `.f3d` **and** export affected `3mf`. Save the `.f3d` at the SG90 preset: CI checks the assembly model against `parts/sg90/` ([docs/3d/assembly-viewer.md](docs/3d/assembly-viewer.md)). CERN-OHL-S. Do not swap `AiEmblem.3mf` as branding. New parts: [docs/3d/adding-parts.md](docs/3d/adding-parts.md).
+- **Mods** — optional add-ons under `mods/<mod_name>/`. Models live in `3d_models/{cad,parts}/`. Commit `type(mods)` and name the mod in the summary. `feat(mods)` / `fix(mods)` do not version stock CAD. See [mods/README.md](mods/README.md).
+- **PCB** — [docs/pcb.md](docs/pcb.md) checklist + KiCad review rules below. Run `python3 scripts/check_pcb.py` (KiCad 10). New board paths need `REUSE.toml`. CERN-OHL-S.
 - **Motion** — poses −1..1 mapped to saved min/max; see [docs/robot-movement.md](docs/robot-movement.md). Do not widen NVS servo clamps without testing on a real robot.
 - **Secrets** — no `.env`, tokens, or Wi-Fi passwords in logs or screenshots.
 

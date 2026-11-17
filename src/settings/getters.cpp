@@ -1,5 +1,5 @@
 #include "settings/settings.h"
-#include "settings/internal.h"
+#include "settings/values.h"
 #include "servos.h"
 
 static_assert(
@@ -8,63 +8,75 @@ static_assert(
 );
 
 uint32_t settingsSleepTimeoutMin() {
-  return g_sleepTimeoutMin;
+  return g_settings.sleepTimeoutMin;
 }
 
 uint32_t settingsSleepTimeoutMs() {
-  return g_sleepTimeoutMin * 60UL * 1000UL;
+  return g_settings.sleepTimeoutMin * 60UL * 1000UL;
 }
 
 const char* settingsHostname() {
-  return g_hostname;
-}
-
-const char* settingsBootHostname() {
-  return g_bootHostname;
+  return g_settings.hostname;
 }
 
 uint8_t settingsVolume() {
-  return g_volume;
+  return g_settings.volume;
 }
 
 bool settingsWelcomeEnabled() {
-  return g_welcome;
+  return g_settings.welcome;
 }
 
 bool settingsSerialLogEnabled() {
-  return g_serialLog;
+  return g_settings.serialLog;
+}
+
+bool settingsPushButton() {
+  return g_settings.pushButton;
+}
+
+uint8_t settingsPushButtonPin() {
+  return g_settings.pushButtonPin;
 }
 
 uint32_t settingsContinuousTimeoutMin() {
-  return g_continuousTimeoutMin;
+  return g_settings.continuousTimeoutMin;
 }
 
 const char* settingsLoading() {
-  return g_loading;
+  return g_settings.loading;
+}
+
+const char* settingsEyesStyle() {
+  return g_settings.eyesStyle;
 }
 
 const char* settingsAccessToken() {
-  return g_accessToken;
+  return g_settings.accessToken;
 }
 
 bool settingsAccessTokenSet() {
-  return g_accessToken[0] != '\0';
+  return g_settings.accessToken[0] != '\0';
 }
 
-const char* settingsWifiSsid() {
-  return g_wifiSsid;
+const WifiNetworkList& settingsWifiNetworks() {
+  return g_wifiNetworks;
 }
 
-const char* settingsWifiPassword() {
-  return g_wifiPassword;
+const ActionList& settingsActions() {
+  return g_actions;
 }
 
 bool settingsWifiConfigured() {
-  return g_wifiSsid[0] != '\0';
+  return g_wifiNetworks.count() > 0;
 }
 
-bool settingsWifiPasswordSet() {
-  return g_wifiPassword[0] != '\0';
+const char* settingsLinkMode() {
+  return g_settings.linkMode;
+}
+
+bool settingsProvisioned() {
+  return strcmp(g_settings.linkMode, "wifi") == 0 || strcmp(g_settings.linkMode, "usb") == 0;
 }
 
 float settingsServoMin(int index) {
@@ -72,7 +84,7 @@ float settingsServoMin(int index) {
     return 0.0f;
   }
 
-  return static_cast<float>(g_servoMin[index]);
+  return static_cast<float>(g_settings.servoRanges.mins[index]);
 }
 
 float settingsServoMax(int index) {
@@ -80,13 +92,13 @@ float settingsServoMax(int index) {
     return static_cast<float>(SETTINGS_SERVO_ANGLE_MAX);
   }
 
-  return static_cast<float>(g_servoMax[index]);
+  return static_cast<float>(g_settings.servoRanges.maxs[index]);
 }
 
 const char* settingsRgbOrder() {
-  return g_rgbOrder;
+  return g_settings.rgbOrder;
 }
 
 bool settingsOledRotate180() {
-  return g_oledRotate180;
+  return g_settings.oledRotate180;
 }

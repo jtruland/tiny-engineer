@@ -1,53 +1,31 @@
-#include "http/anim_handlers.h"
-
 #include <Arduino.h>
-#include <cstdio>
 
 #include "animation.h"
-#include "http/json.h"
-
-namespace {
-
-void sendAnimationJson(WebServer& server) {
-  char body[64];
-
-  snprintf(
-    body,
-    sizeof(body),
-    "{\"ok\":true,\"animation\":\"%s\"}",
-    animationName(getAnimation())
-  );
-
-  httpSendJson(server, 200, body);
-}
-
-}  // namespace
+#include "api/commands.h"
+#include "http/handlers.h"
+#include "http/response.h"
 
 void handleAnimGet(WebServer& server) {
-  sendAnimationJson(server);
+  AnimationId id = AnimationId::None;
+  apiGetAnimation(id);
+
+  JsonDocument body;
+  body["ok"] = true;
+  body["animation"] = animationName(id);
+  sendJson(server, 200, body);
 }
 
 void handleAnimPost(WebServer& server) {
   if (!server.hasArg("name")) {
-    httpSendJson(
-      server,
-      400,
-      "{\"ok\":false,\"error\":\"missing name\"}"
-    );
+    sendError(server, 400, "missing name");
     return;
   }
 
-  AnimationId id;
-
-  if (!parseAnimationName(server.arg("name").c_str(), id)) {
-    httpSendJson(
-      server,
-      400,
-      "{\"ok\":false,\"error\":\"unknown animation\"}"
-    );
+  const ApiResult result = apiSetAnimation(server.arg("name").c_str());
+  if (!result.ok) {
+    sendError(server, result.code, result.error);
     return;
   }
 
-  setAnimation(id);
-  sendAnimationJson(server);
+  handleAnimGet(server);
 }

@@ -109,6 +109,7 @@ void resolveAnimationTarget(AnimationId id, uint8_t& r, uint8_t& g, uint8_t& b) 
     case AnimationId::Typing:
     case AnimationId::Reading:
     case AnimationId::Thinking:
+    case AnimationId::Talking:
     case AnimationId::Welcome:
     case AnimationId::Ring:
     case AnimationId::Wakeup:
@@ -331,7 +332,14 @@ void updateRgb(uint32_t nowMs) {
   applyTransition(nowMs);
 }
 
-void haltWithRgbCode(uint8_t blinks) {
+void haltWithRgbCode(uint8_t blinks, const char* reason) {
+  Serial.println();
+  Serial.print("HALT: ");
+  Serial.println(reason ? reason : "unknown");
+  Serial.print("LED blinks: ");
+  Serial.println(blinks);
+  Serial.flush();
+
   while (true) {
     for (uint8_t i = 0; i < blinks; i++) {
       setRgb(64, 0, 0);

@@ -1,133 +1,148 @@
-#include "settings/internal.h"
-#include "settings/nvs.h"
+#include "actions/migrate.h"
+#include "serial/link.h"
 #include "serial_log.h"
+#include "settings/nvs.h"
 #include "settings/settings.h"
+#include "settings/values.h"
 
-#include <Arduino.h>
-#include <cstring>
+namespace {
 
-void initSettings() {
-  setHostnameCache(g_hostname, SETTINGS_DEFAULT_HOSTNAME);
-  g_volume = SETTINGS_DEFAULT_VOLUME;
-  g_welcome = SETTINGS_DEFAULT_WELCOME;
-  g_serialLog = SETTINGS_DEFAULT_SERIAL_LOG;
-  g_continuousTimeoutMin = SETTINGS_DEFAULT_CONTINUOUS_TIMEOUT_MIN;
-  setLoadingCache(g_loading, SETTINGS_DEFAULT_LOADING);
-  setAccessTokenCache(g_accessToken, SETTINGS_DEFAULT_ACCESS_TOKEN);
-  setWifiSsidCache(g_wifiSsid, "");
-  setWifiPasswordCache(g_wifiPassword, "");
-  fillDefaultServoRanges(g_servoMin, g_servoMax);
-  setRgbOrderCache(g_rgbOrder, SETTINGS_DEFAULT_RGB_ORDER);
-  g_oledRotate180 = SETTINGS_DEFAULT_OLED_ROTATE_180;
+// True when the networks came from the single-network keys of older firmware.
+bool loadWifiNetworks() {
+  if (g_settingsPrefs.isKey(kKeyWifiNets)) {
+    uint8_t blob[sizeof(WifiNetwork) * SETTINGS_WIFI_NETWORK_MAX] = {};
+    const size_t length =
+      g_settingsPrefs.getBytes(kKeyWifiNets, blob, sizeof(blob));
+    g_wifiNetworks.load(blob, length);
+    return false;
+  }
 
-  if (!settingsNvsBeginRead()) {
-    serialLogPrintln("Settings: NVS open failed; using defaults");
-    setHostnameCache(g_bootHostname, g_hostname);
+  if (!g_settingsPrefs.isKey(kKeyWifiSsid)) {
+    return false;
+  }
+
+  const String ssid = g_settingsPrefs.getString(kKeyWifiSsid, "");
+  const String password = g_settingsPrefs.getString(kKeyWifiPass, "");
+  g_wifiNetworks.add(ssid.c_str(), password.c_str());
+  return true;
+}
+
+void migrateLegacyWifi() {
+  if (!g_settingsPrefs.begin(kNs, false)) {
     return;
   }
 
-  g_sleepTimeoutMin = g_settingsPrefs.getUInt(
-    kKeySleep,
-    SETTINGS_DEFAULT_SLEEP_TIMEOUT_MIN
+  // An invalid legacy SSID loads as an empty list; its keys go too.
+  const size_t length = g_wifiNetworks.count() * sizeof(WifiNetwork);
+  const bool moved =
+    length == 0 ||
+    g_settingsPrefs.putBytes(kKeyWifiNets, g_wifiNetworks.data(), length) ==
+      length;
+
+  if (moved) {
+    g_settingsPrefs.remove(kKeyWifiSsid);
+    g_settingsPrefs.remove(kKeyWifiPass);
+  }
+
+  g_settingsPrefs.end();
+}
+
+// Older firmware stored servo_hold here. Idle/sleep always limp now.
+constexpr const char* kLegacyServoHold = "srv_hold";
+
+void dropLegacyServoHold() {
+  if (g_settingsPrefs.isKey(kLegacyServoHold)) {
+    g_settingsPrefs.remove(kLegacyServoHold);
+  }
+}
+
+void loadActionsBlob() {
+  if (!g_settingsPrefs.isKey(kKeyActions)) {
+    return;
+  }
+
+  uint8_t blob[sizeof(ActionEntry) * ACTIONS_MAX] = {};
+  const size_t length =
+    g_settingsPrefs.getBytes(kKeyActions, blob, sizeof(blob));
+  g_actions.load(blob, length);
+}
+
+void clearLegacyButtonSoundKeys() {
+  g_settingsPrefs.remove(kKeyBtnSndDn);
+  g_settingsPrefs.remove(kKeyBtnSndUp);
+  g_settingsPrefs.remove(kKeyBtnSndClk);
+  g_settingsPrefs.remove(kKeyBtnSndDbl);
+  g_settingsPrefs.remove(kKeyBtnSndLng);
+}
+
+void migrateLegacyButtonSounds() {
+  const bool hadLegacyKeys =
+    g_settingsPrefs.isKey(kKeyBtnSndDn) ||
+    g_settingsPrefs.isKey(kKeyBtnSndUp) ||
+    g_settingsPrefs.isKey(kKeyBtnSndClk) ||
+    g_settingsPrefs.isKey(kKeyBtnSndDbl) ||
+    g_settingsPrefs.isKey(kKeyBtnSndLng);
+
+  if (!hadLegacyKeys) {
+    return;
+  }
+
+  ActionList next = g_actions;
+  const bool migrated = actionsMigrateLegacyButtonSounds(
+    next,
+    g_settings.pushButtonSoundDown,
+    g_settings.pushButtonSoundUp,
+    g_settings.pushButtonSoundClick,
+    g_settings.pushButtonSoundDoubleClick,
+    g_settings.pushButtonSoundLongClick
   );
 
-  if (!settingsValidateSleepTimeout(g_sleepTimeoutMin)) {
-    g_sleepTimeoutMin = SETTINGS_DEFAULT_SLEEP_TIMEOUT_MIN;
-  }
-
-  String host = g_settingsPrefs.getString(kKeyHost, SETTINGS_DEFAULT_HOSTNAME);
-
-  if (settingsValidateHostname(host.c_str())) {
-    setHostnameCache(g_hostname, host.c_str());
-  } else {
-    setHostnameCache(g_hostname, SETTINGS_DEFAULT_HOSTNAME);
-  }
-
-  const uint32_t vol = g_settingsPrefs.getUInt(kKeyVolume, SETTINGS_DEFAULT_VOLUME);
-
-  if (vol <= SETTINGS_VOLUME_MAX &&
-      settingsValidateVolume(static_cast<uint8_t>(vol))) {
-    g_volume = static_cast<uint8_t>(vol);
-  } else {
-    g_volume = SETTINGS_DEFAULT_VOLUME;
-  }
-
-  g_welcome = g_settingsPrefs.getBool(kKeyWelcome, SETTINGS_DEFAULT_WELCOME);
-  g_serialLog = g_settingsPrefs.getBool(kKeySerialLog, SETTINGS_DEFAULT_SERIAL_LOG);
-
-  g_continuousTimeoutMin = g_settingsPrefs.getUInt(
-    kKeyContTo,
-    SETTINGS_DEFAULT_CONTINUOUS_TIMEOUT_MIN
-  );
-
-  if (!settingsValidateContinuousTimeout(g_continuousTimeoutMin)) {
-    g_continuousTimeoutMin = SETTINGS_DEFAULT_CONTINUOUS_TIMEOUT_MIN;
-  }
-
-  String loading = g_settingsPrefs.getString(kKeyLoading, SETTINGS_DEFAULT_LOADING);
-
-  if (settingsValidateLoading(loading.c_str())) {
-    setLoadingCache(g_loading, loading.c_str());
-  } else {
-    setLoadingCache(g_loading, SETTINGS_DEFAULT_LOADING);
-  }
-
-  String accessTok =
-    g_settingsPrefs.getString(kKeyAccessTok, SETTINGS_DEFAULT_ACCESS_TOKEN);
-
-  if (settingsValidateAccessToken(accessTok.c_str())) {
-    setAccessTokenCache(g_accessToken, accessTok.c_str());
-  } else {
-    setAccessTokenCache(g_accessToken, SETTINGS_DEFAULT_ACCESS_TOKEN);
-  }
-
-  String wifiSsid = g_settingsPrefs.getString(kKeyWifiSsid, "");
-
-  if (settingsValidateWifiSsid(wifiSsid.c_str())) {
-    setWifiSsidCache(g_wifiSsid, wifiSsid.c_str());
-  } else {
-    setWifiSsidCache(g_wifiSsid, "");
-  }
-
-  String wifiPass = g_settingsPrefs.getString(kKeyWifiPass, "");
-
-  if (settingsValidateWifiPassword(wifiPass.c_str())) {
-    setWifiPasswordCache(g_wifiPassword, wifiPass.c_str());
-  } else {
-    setWifiPasswordCache(g_wifiPassword, "");
-  }
-
-  uint8_t servoBlob[kServoRangesLen] = {};
-  const size_t servoBytes =
-    g_settingsPrefs.getBytes(kKeyServoRanges, servoBlob, kServoRangesLen);
-
-  if (servoBytes == kServoRangesLen) {
-    uint8_t loadedMin[SETTINGS_SERVO_COUNT] = {};
-    uint8_t loadedMax[SETTINGS_SERVO_COUNT] = {};
-    unpackServoRanges(servoBlob, loadedMin, loadedMax);
-
-    if (settingsValidateServoRanges(loadedMin, loadedMax)) {
-      memcpy(g_servoMin, loadedMin, SETTINGS_SERVO_COUNT);
-      memcpy(g_servoMax, loadedMax, SETTINGS_SERVO_COUNT);
+  if (migrated) {
+    const size_t length = next.count() * sizeof(ActionEntry);
+    if (g_settingsPrefs.putBytes(kKeyActions, next.data(), length) != length) {
+      return;
     }
+    g_actions = next;
   }
 
-  String rgbOrder = g_settingsPrefs.getString(kKeyRgbOrder, SETTINGS_DEFAULT_RGB_ORDER);
+  clearLegacyButtonSoundKeys();
+}
 
-  if (settingsValidateRgbOrder(rgbOrder.c_str())) {
-    setRgbOrderCache(g_rgbOrder, rgbOrder.c_str());
+}  // namespace
+
+void initSettings() {
+  g_settings = SettingsValues::defaults();
+  g_wifiNetworks.clear();
+  g_actions.clear();
+  bool legacyWifi = false;
+
+  // RW so a missing namespace is created without Preferences NOT_FOUND ERROR.
+  // Boot reads settings and drops the retired srv_hold key; saves use openForWrite.
+  if (g_settingsPrefs.begin(kNs, false)) {
+    g_settings.load();
+    legacyWifi = loadWifiNetworks();
+    loadActionsBlob();
+    migrateLegacyButtonSounds();
+    dropLegacyServoHold();
+    g_settingsPrefs.end();
   } else {
-    setRgbOrderCache(g_rgbOrder, SETTINGS_DEFAULT_RGB_ORDER);
+    serialLogPrintln("Settings: NVS open failed; using defaults");
   }
 
-  g_oledRotate180 = g_settingsPrefs.getBool(
-    kKeyOledRot,
-    SETTINGS_DEFAULT_OLED_ROTATE_180
-  );
+  g_bootSettings = g_settings;
 
-  settingsNvsEnd();
+  if (legacyWifi) {
+    migrateLegacyWifi();
+  }
 
-  setHostnameCache(g_bootHostname, g_hostname);
+  // Older firmware had Wi-Fi nets but no link_mode; treat as Wi-Fi mode.
+  if (g_settings.linkMode[0] == '\0' && g_wifiNetworks.count() > 0) {
+    SettingsPatch patch;
+    patch.linkMode = "wifi";
+    saveSettings(patch);
+  }
 
-  logSettingsSnapshot("Settings:");
+  // Framed serial API (and LOG frames) start after NVS is loaded.
+  serialLinkBegin();
+  g_settings.log("Settings:");
 }

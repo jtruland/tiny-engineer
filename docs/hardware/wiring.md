@@ -1,4 +1,23 @@
-# Wiring
+# Modular wiring (advanced)
+
+The default build uses the [main control board](main-control-board.md). This page is for adding modules that board does not support: a separate PCA9685 breakout, a MAX98357A breakout, and an Adafruit 5993 USB-C breakout.
+
+Build the harness **on the desk** ([getting-started](../getting-started.md) — after print, before flash). Seat it with [assembly-modular.md](../3d/assembly-modular.md), which replaces [assembly §12–§13](../3d/assembly.md#12-electronics-inside-the-desk).
+
+**Why these nets exist:**
+
+- Two voltage rails: **5 V** for servos and the amp; **3.3 V** for ESP32 GPIO, PCA9685 **VCC**, and OLED. Never jumper those together.
+- PCA9685 **VCC** is logic; **V+** is servo power. Same chip, two jobs.
+- OLED and PCA9685 share one I2C bus (SDA/SCL).
+- Audio is I2S into the MAX98357A; the speaker is **BTL** — **SPK− is not ground**.
+- Every module shares **GND**.
+
+**Connect in this order (power last):**
+
+1. Common **GND** to every module.
+2. Signal wires: I2C (SDA/SCL), I2S (BCLK/LRC/DIN), USB D+/D−, PCA9685 OE (GP5 → OE).
+3. Logic **3V3**: ESP32 **3V3** → PCA9685 **VCC** and OLED **VCC**.
+4. **5 V** last: USB VBUS → ESP32 **5V**, PCA9685 **5V**, MAX98357A **Vin**. Leave servo leads unplugged until centering.
 
 Source of truth for *what is connected to what*: [`docs/wiring/Tiny Engineer.drawio.png`](../wiring/Tiny%20Engineer.drawio.png) ([`.drawio`](../wiring/Tiny%20Engineer.drawio)).
 
@@ -49,7 +68,6 @@ On Adafruit PCA9685, header/terminal **V+** is normally the same servo rail as t
 | ESP32-C3-Zero | GP2 | MAX98357A | BCLK | I2S bit clock |
 | ESP32-C3-Zero | GP3 | MAX98357A | LRC | I2S word select |
 | ESP32-C3-Zero | GP4 | MAX98357A | DIN | I2S data |
-| ESP32-C3-Zero | GP5 | PCA9685 | OE | Optional output enable (see [interfaces.md](interfaces.md)) |
 | PCA9685 | PWM | Servo | SIG | Servo PWM |
 | PCA9685 | V+ | Servo | 5V | Servo power |
 | PCA9685 | GND (servo side) | Servo | GND | Servo ground |
@@ -119,7 +137,7 @@ One generic **Servo** block:
 | 5V | V+ |
 | GND | GND |
 
-Firmware drives **channels 0–4** (`SERVO_CHANNELS`). The drawing does not number the PWM header. Channel → joint: [robot-movement.md](../robot-movement.md) / [`include/servos.h`](../../include/servos.h).
+Firmware drives **channels 0–4** (`SERVO_SPECS` / `SERVO_HEAD`…`SERVO_BODY`). The drawing does not number the PWM header. Channel → joint: [robot-movement.md](../robot-movement.md) / [`include/servos.h`](../../include/servos.h).
 
 ## Pads drawn with no wires
 
@@ -127,9 +145,9 @@ ESP32-C3-Zero, unused in the PNG:
 
 **GP6, GP7, GP8, GP9, GP10, GP20, GP21**
 
-GP5 = optional PCA9685 OE (not in PNG). GP9 = BOOT, GP10 = onboard WS2812. GP18/GP19 = native USB — wire from 5993 D−/D+ even if the base PNG omits them. See [pinout.md](pinout.md).
+Wire **GP5** → PCA9685 **OE** (`PCA9685_OE_PIN`; active LOW). The base PNG may omit that wire — add it on the breadboard and on the Adafruit breakout OE pin. GP9 = BOOT, GP10 = onboard WS2812. GP18/GP19 = native USB — wire from 5993 D−/D+ even if the base PNG omits them. See [pinout.md](pinout.md).
 
-PCA9685 **OE** optional on GP5 — not drawn on base PNG. MAX98357A **GAIN** / **SD** not wired (breakout defaults). **SPK+** / **SPK-** not drawn.
+MAX98357A **GAIN** / **SD** not wired (breakout defaults). **SPK+** / **SPK-** not drawn.
 
 ## Not on the drawing
 
@@ -140,17 +158,37 @@ Still part of the selected hardware; do not invent extra ESP32 GPIO for them.
 | Speaker | Terminals → MAX98357A **SPK+** and **SPK-** only |
 | 4 extra analog micro servos | Same 3-wire pattern as the drawn servo, on PCA9685 PWM 0–4 |
 | Adafruit 5993 D+/D− | Wire to ESP32 **GP19** / **GP18** for flash and CDC (single-USB design) |
+| PCA9685 OE | Wire ESP32 **GP5** → PCA9685 **OE** (active LOW) |
 | MAX98357A GAIN / SD | Not wired; leave breakout defaults |
 
 > [!WARNING]
 > MAX98357A output is BTL. **SPK- is not ground.** Never tie SPK- or SPK+ to GND. Never drive the speaker from ESP32 GPIO.
 
-## USB connector (single)
+## USB connector (5993)
+
+On this path the robot uses **one** USB-C connector: the Adafruit 5993.
+
+| Net | 5993 | ESP32 |
+| --- | --- | --- |
+| +5V | **VBUS** | **5V** pad (and the shared +5V rail) |
+| GND | **GND** | **GND** |
+| USB D− | **D−** | **GPIO18** (native USB D−) |
+| USB D+ | **D+** | **GPIO19** (native USB D+) |
 
 | Connector | Role |
 | --- | --- |
 | Adafruit **5993** | Only robot USB-C: **VBUS/GND** (power) + **D+/D−** → GP19/GP18 (flash / serial CDC) |
 | ESP32-C3-Zero onboard USB-C | Leave **unused** when 5993 data is wired (avoids dual 5 V feed) |
+
+That one cable supplies robot power and programming / serial CDC (`ARDUINO_USB_MODE=1`, `ARDUINO_USB_CDC_ON_BOOT=1`, monitor 115200). For early bare-module flashing before 5993 data is wired, the onboard port is fine.
+
+Adafruit 5993 is a USB Type-C vertical breakout (downstream). Two 5.1 kΩ CC resistors ask the upstream port for **5 V / up to ~1.5 A**. Whether 1.5 A actually arrives depends on the charger/port. Five HD-1370A servos at stall (~1.3 A @ 4.8 V) plus the rest of the robot leaves little safety margin on a 1.5 A USB source. SG90 stall is typically higher still.
+
+- **5 V / ≥ 2 A**, with extra margin if several servos can move **while audio plays**.
+- The 5993 does not raise the current ceiling above what the source and CC advertisement allow.
+- The 5993 is **not** USB-PD voltage conversion. Feed it 5 V USB, or bypass it with a dedicated 5 V / ≥2 A PSU on the +5V and GND rails.
+
+The drawing may show USB **5V** / **GND** only; also wire **D+/D−**.
 
 See [interfaces.md](interfaces.md), [power.md](power.md).
 

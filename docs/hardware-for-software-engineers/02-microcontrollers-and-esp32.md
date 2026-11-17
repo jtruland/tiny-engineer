@@ -53,7 +53,7 @@ You don't get unlimited pins. Each pin might be reserved for flash, USB, or boot
 
 **Upload** — PlatformIO sends firmware over USB. On ESP32-C3, that's **native USB** on specific GPIO pins (not a separate USB-UART chip).
 
-If upload fails: try another cable (data, not charge-only), another port, hold BOOT, check drivers. Details in [getting-started.md § Flash](../getting-started.md#4-flash).
+If upload fails: try another cable (data, not charge-only), another port, hold BOOT, check drivers. Details in [flash.md](../flash.md).
 
 ---
 
@@ -102,15 +102,15 @@ The firmware dedicates most exposed GPIOs. Rough mental map:
 - **GP2–GP4** — I2S (BCLK, LRC, DIN) to audio amp
 - **GP9** — BOOT button
 - **GP10** — onboard RGB LED
-- **GP18 / GP19** — native USB D− / D+ (wired to Adafruit 5993 breakout when assembled)
+- **GP18 / GP19** — native USB D− / D+ (main control board USB-C when assembled; advanced path: Adafruit 5993 — [wiring.md](../hardware/wiring.md))
 
 Many other GPIOs are used internally for flash and aren't available. Don't reassign USB pins if you flash over that cable.
 
 Full allocation: [pinout.md](../hardware/pinout.md).
 
-### USB: onboard vs breakout
+### USB: onboard vs robot connector
 
-The C3-Zero has a USB-C port on the board, but **when the robot is assembled**, flash and serial go through the **Adafruit 5993 USB-C breakout** wired to GPIO18/19. One cable on the robot's exterior for power and programming.
+The C3-Zero has a USB-C port on the module. **When the robot is assembled**, flash and serial go through the **main control board USB-C**, which reaches GPIO18/19. One cable on the robot for power and programming. The advanced breakout path uses an Adafruit 5993 on those same pins — [wiring.md](../hardware/wiring.md).
 
 ### The RGB LED is your boot log
 
@@ -122,10 +122,10 @@ Wi-Fi is how coding agents talk to the robot. The C3-Zero uses a **ceramic anten
 
 ### Flash workflow
 
-Build, upload, monitor — copy-paste lives in [getting-started.md § Flash](../getting-started.md#4-flash). This chapter stops at *what* the chip is; that page is *how* to deploy.
+Build, upload, monitor — copy-paste lives in [flash.md](../flash.md). This chapter stops at *what* the chip is; that page is *how* to deploy.
 
 ---
 
 **Next:** [Wiring craft and schematics](03-wiring-craft-and-schematics.md)
 
-**Reference:** [hardware/components.md](../hardware/components.md) · [hardware/pinout.md](../hardware/pinout.md) · [getting-started.md § Flash](../getting-started.md#4-flash)
+**Reference:** [hardware/components.md](../hardware/components.md) · [hardware/pinout.md](../hardware/pinout.md) · [flash.md](../flash.md)

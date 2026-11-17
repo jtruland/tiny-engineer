@@ -36,7 +36,6 @@ void wakeFromSleep(uint32_t now) {
 
 void beginSleepClosing(uint32_t now) {
   requestSleepEyeClose(now);
-  commandSleepHead(anim::SLEEP_HEAD_DOWN);
   g_state = SleepState::Closing;
 }
 
@@ -55,18 +54,22 @@ void prepareSleepWakePose() {
   commandSleepHead(anim::SLEEP_HEAD_AWAKE);
 }
 
-void requestSleep() {
+void requestSleep(uint32_t now) {
   if (g_state == SleepState::Sleeping ||
       g_state == SleepState::Closing) {
     return;
   }
 
-  beginSleepClosing(millis());
+  beginSleepClosing(now);
+}
+
+void noteActivity(uint32_t now) {
+  g_idleSinceMs = now;
 }
 
 void onAnimationApplied(AnimationId id, uint32_t now) {
   if (id == AnimationId::None) {
-    g_idleSinceMs = now;
+    noteActivity(now);
     return;
   }
 
@@ -140,4 +143,9 @@ void updateSleep(uint32_t now) {
 
 bool isSleeping() {
   return g_state == SleepState::Sleeping;
+}
+
+bool sleepAllowsWakeup() {
+  return g_state == SleepState::Sleeping ||
+         g_state == SleepState::Closing;
 }
