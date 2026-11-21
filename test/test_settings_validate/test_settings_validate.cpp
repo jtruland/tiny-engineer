@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstring>
 #include <unity.h>
 
@@ -63,6 +64,40 @@ void test_push_button_sound_legacy_validate() {
   TEST_ASSERT_FALSE(settingsValidatePushButtonSound(nullptr));
 }
 
+void test_lcd1602_boot_and_line() {
+  TEST_ASSERT_TRUE(settingsValidateLcd1602Boot("none"));
+  TEST_ASSERT_TRUE(settingsValidateLcd1602Boot("last"));
+  TEST_ASSERT_TRUE(settingsValidateLcd1602Boot("config"));
+  TEST_ASSERT_FALSE(settingsValidateLcd1602Boot("welcome"));
+  TEST_ASSERT_FALSE(settingsValidateLcd1602Boot(""));
+  TEST_ASSERT_FALSE(settingsValidateLcd1602Boot(nullptr));
+
+  TEST_ASSERT_TRUE(settingsValidateLcd1602Line(""));
+  TEST_ASSERT_TRUE(settingsValidateLcd1602Line("HELLO"));
+  TEST_ASSERT_TRUE(settingsValidateLcd1602Line("caf\xc3\xa9"));
+  char longLine[66];
+  memset(longLine, 'a', 64);
+  longLine[64] = '\0';
+  TEST_ASSERT_TRUE(settingsValidateLcd1602Line(longLine));
+  longLine[64] = 'x';
+  longLine[65] = '\0';
+  TEST_ASSERT_FALSE(settingsValidateLcd1602Line(longLine));
+  TEST_ASSERT_FALSE(settingsValidateLcd1602Line(nullptr));
+  TEST_ASSERT_FALSE(settingsValidateLcd1602Line("line\nbreak"));
+  TEST_ASSERT_FALSE(settingsValidateLcd1602Line("\x01"));
+  // Decoded JSON length must reject embedded NUL (strlen would truncate to "A").
+  const char withNul[] = {'A', '\0', 'B'};
+  TEST_ASSERT_FALSE(settingsValidateLcd1602Line(withNul, sizeof(withNul)));
+  TEST_ASSERT_TRUE(settingsValidateLcd1602Line(withNul, 1));
+
+  SettingsPatch patch;
+  patch.lcd1602Boot = "welcome";
+  TEST_ASSERT_EQUAL_STRING("lcd1602_boot", patch.invalidField());
+  patch.lcd1602Boot = "none";
+  patch.lcd1602Line1 = longLine;
+  TEST_ASSERT_EQUAL_STRING("lcd1602_line1", patch.invalidField());
+}
+
 void test_loading() {
   TEST_ASSERT_TRUE(settingsValidateLoading("progress"));
   TEST_ASSERT_TRUE(settingsValidateLoading("sleep_inertia"));
@@ -76,6 +111,7 @@ void test_eyes_style() {
   TEST_ASSERT_TRUE(settingsValidateEyesStyle("cover"));
   TEST_ASSERT_TRUE(settingsValidateEyesStyle("dots"));
   TEST_ASSERT_TRUE(settingsValidateEyesStyle("kawaii"));
+  TEST_ASSERT_TRUE(settingsValidateEyesStyle("evil"));
   TEST_ASSERT_FALSE(settingsValidateEyesStyle("other"));
   TEST_ASSERT_FALSE(settingsValidateEyesStyle(nullptr));
 }
@@ -138,6 +174,40 @@ void test_servo_ranges() {
   TEST_ASSERT_TRUE(valid.valid());
   TEST_ASSERT_FALSE(equal.valid());
   TEST_ASSERT_FALSE(over.valid());
+}
+
+void test_face_pose() {
+  const FacePose unset{};
+  const FacePose valid = {true, {0.2f, -0.4f, 0.1f}};
+  const FacePose edges = {true, {-1.0f, 1.0f, 0.0f}};
+  const FacePose over = {true, {0.0f, 1.01f, 0.0f}};
+  const FacePose under = {true, {-1.5f, 0.0f, 0.0f}};
+  const FacePose notNumber = {true, {0.0f, 0.0f, NAN}};
+  // Values are ignored while the pose is not set.
+  const FacePose clearedWithJunk = {false, {5.0f, NAN, -9.0f}};
+
+  TEST_ASSERT_TRUE(unset.valid());
+  TEST_ASSERT_TRUE(valid.valid());
+  TEST_ASSERT_TRUE(edges.valid());
+  TEST_ASSERT_FALSE(over.valid());
+  TEST_ASSERT_FALSE(under.valid());
+  TEST_ASSERT_FALSE(notNumber.valid());
+  TEST_ASSERT_TRUE(clearedWithJunk.valid());
+}
+
+void test_face_pose_patch() {
+  SettingsPatch patch;
+
+  patch.facePose = FacePose{true, {0.15f, -0.3f, 0.1f}};
+  TEST_ASSERT_NULL(patch.invalidField());
+  // Face me is a desk setting, not a setup-only calibration.
+  TEST_ASSERT_NULL(patch.setupOnlyStep());
+
+  patch.facePose = FacePose{};
+  TEST_ASSERT_NULL(patch.invalidField());
+
+  patch.facePose = FacePose{true, {0.0f, 2.0f, 0.0f}};
+  TEST_ASSERT_EQUAL_STRING("face_pose", patch.invalidField());
 }
 
 void test_patch_names_the_first_invalid_field() {
@@ -230,12 +300,15 @@ int main() {
   RUN_TEST(test_volume);
   RUN_TEST(test_push_button_pin);
   RUN_TEST(test_push_button_sound_legacy_validate);
+  RUN_TEST(test_lcd1602_boot_and_line);
   RUN_TEST(test_loading);
   RUN_TEST(test_eyes_style);
   RUN_TEST(test_access_token);
   RUN_TEST(test_wifi_ssid);
   RUN_TEST(test_wifi_password);
   RUN_TEST(test_servo_ranges);
+  RUN_TEST(test_face_pose);
+  RUN_TEST(test_face_pose_patch);
   RUN_TEST(test_patch_names_the_first_invalid_field);
   RUN_TEST(test_patch_names_its_setup_only_step);
   RUN_TEST(test_rgb_order);

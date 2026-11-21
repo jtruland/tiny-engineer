@@ -5,7 +5,8 @@
 #include "api/commands.h"
 #include "display/oled.h"
 #include "events/hub.h"
-#include "extensions/push_button.h"
+#include "extensions/lcd1602/lcd1602.h"
+#include "extensions/push_button/push_button.h"
 #include "hardware/rgb.h"
 #include "http/handlers.h"
 #include "http/request.h"
@@ -35,6 +36,21 @@ bool readField(JsonVariantConst value, const char*& out) {
   return out != nullptr;
 }
 
+// LCD lines: validate decoded JSON length so embedded \u0000 cannot truncate.
+bool readLcd1602LineField(JsonVariantConst value, const char*& out) {
+  if (!value.is<JsonString>()) {
+    return false;
+  }
+
+  const JsonString text = value.as<JsonString>();
+  if (text.isNull() || !settingsValidateLcd1602Line(text.c_str(), text.size())) {
+    return false;
+  }
+
+  out = text.c_str();
+  return true;
+}
+
 bool readField(JsonVariantConst list, uint8_t (&out)[SETTINGS_SERVO_COUNT]) {
   if (!list.is<JsonArrayConst>() || list.size() != SETTINGS_SERVO_COUNT) {
     return false;
@@ -51,10 +67,41 @@ bool readField(JsonVariantConst list, uint8_t (&out)[SETTINGS_SERVO_COUNT]) {
   return true;
 }
 
+// [] clears the face pose; [head, neck, body] sets it. Range checks run later
+// in SettingsPatch::invalidField().
+bool readField(JsonVariantConst list, std::optional<FacePose>& out) {
+  if (!list.is<JsonArrayConst>()) {
+    return false;
+  }
+
+  FacePose pose{};
+
+  if (list.size() == 0) {
+    out = pose;
+    return true;
+  }
+
+  if (list.size() != SETTINGS_FACE_POSE_COUNT) {
+    return false;
+  }
+
+  for (size_t i = 0; i < SETTINGS_FACE_POSE_COUNT; i++) {
+    if (!list[i].is<float>()) {
+      return false;
+    }
+
+    pose.values[i] = list[i].as<float>();
+  }
+
+  pose.set = true;
+  out = pose;
+  return true;
+}
+
 // Fills the patch from the body. Returns the 400 message, or an empty string
 // when every field is known and has the right JSON type.
 String readPatch(JsonObjectConst body, SettingsPatch& patch) {
-  const char* known[19] = {};
+  const char* known[25] = {};
   size_t knownCount = 0;
   const char* wrong = nullptr;
 
@@ -78,6 +125,23 @@ String readPatch(JsonObjectConst body, SettingsPatch& patch) {
   read("serial_log", patch.serialLog);
   read("push_button", patch.pushButton);
   read("push_button_pin", patch.pushButtonPin);
+  read("lcd1602", patch.lcd1602);
+  read("lcd1602_backlight_sleep", patch.lcd1602BacklightSleep);
+  read("lcd1602_welcome_hello", patch.lcd1602WelcomeHello);
+  read("lcd1602_boot", patch.lcd1602Boot);
+
+  if (!body["lcd1602_line1"].isUnbound()) {
+    known[knownCount++] = "lcd1602_line1";
+    if (wrong == nullptr && !readLcd1602LineField(body["lcd1602_line1"], patch.lcd1602Line1)) {
+      wrong = "lcd1602_line1";
+    }
+  }
+  if (!body["lcd1602_line2"].isUnbound()) {
+    known[knownCount++] = "lcd1602_line2";
+    if (wrong == nullptr && !readLcd1602LineField(body["lcd1602_line2"], patch.lcd1602Line2)) {
+      wrong = "lcd1602_line2";
+    }
+  }
   read("continuous_timeout", patch.continuousTimeoutMin);
   read("loading", patch.loading);
   read("eyes_style", patch.eyesStyle);
@@ -85,6 +149,7 @@ String readPatch(JsonObjectConst body, SettingsPatch& patch) {
   read("link_mode", patch.linkMode);
   read("rgb_order", patch.rgbOrder);
   read("oled_rotate_180", patch.oledRotate180);
+  read("face_pose", patch.facePose);
 
   ServoRanges ranges{};
   read("servo_mins", ranges.mins);
@@ -126,6 +191,12 @@ JsonDocument settingsJson() {
   doc["serial_log"] = settingsSerialLogEnabled();
   doc["push_button"] = settingsPushButton();
   doc["push_button_pin"] = settingsPushButtonPin();
+  doc["lcd1602"] = settingsLcd1602();
+  doc["lcd1602_backlight_sleep"] = settingsLcd1602BacklightSleep();
+  doc["lcd1602_welcome_hello"] = settingsLcd1602WelcomeHello();
+  doc["lcd1602_boot"] = settingsLcd1602Boot();
+  doc["lcd1602_line1"] = settingsLcd1602Line1();
+  doc["lcd1602_line2"] = settingsLcd1602Line2();
   doc["continuous_timeout"] = settingsContinuousTimeoutMin();
   doc["loading"] = settingsLoading();
   doc["eyes_style"] = settingsEyesStyle();
@@ -143,6 +214,15 @@ JsonDocument settingsJson() {
 
   doc["rgb_order"] = settingsRgbOrder();
   doc["oled_rotate_180"] = settingsOledRotate180();
+
+  const FacePose& face = settingsFacePose();
+  JsonArray facePose = doc["face_pose"].to<JsonArray>();
+
+  if (face.set) {
+    for (const float value : face.values) {
+      facePose.add(value);
+    }
+  }
 
   const WifiNetworkList& networks = settingsWifiNetworks();
   JsonArray ssids = doc["wifi_networks"].to<JsonArray>();
@@ -203,10 +283,11 @@ void handleSettingsPost(WebServer& server) {
     return;
   }
 
-  // Compare before save — saveSettings updates the in-memory token.
+  // Compare before save — saveSettings updates the in-memory values.
   const bool tokenRotated = patch.accessToken != nullptr &&
                             patch.accessToken[0] != '\0' &&
                             strcmp(patch.accessToken, settingsAccessToken()) != 0;
+  const bool lcdNeedsApply = lcd1602PatchNeedsApply(patch);
 
   char pinConflict[96];
   if (settingsWouldPinConflict(patch, pinConflict, sizeof(pinConflict))) {
@@ -225,6 +306,10 @@ void handleSettingsPost(WebServer& server) {
 
   if (patch.pushButton.has_value() || patch.pushButtonPin.has_value()) {
     pushButtonApplyFromSettings();
+  }
+
+  if (lcdNeedsApply) {
+    lcd1602ApplyFromSettings(&patch);
   }
 
   if (patch.oledRotate180) {

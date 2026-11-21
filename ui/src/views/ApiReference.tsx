@@ -35,6 +35,13 @@ const ROUTES = [
   ["POST", "/setup/audio", "Setup AP only: play welcome.wav from LittleFS"],
   ["POST", "/setup/oled", "Setup AP only: preview OLED 180° rotation (see parameters below)"],
   ["POST", "/servos/park", "Center all servos at mid and hold PWM until reboot"],
+  ["GET", "/extensions/lcd1602/text", "LCD 1602 logical text state"],
+  ["POST", "/extensions/lcd1602/text", "Update LCD 1602 text (partial JSON)"],
+  ["DELETE", "/extensions/lcd1602/text", "Clear both LCD 1602 lines"],
+  ["GET", "/extensions/lcd1602/brightness", "LCD 1602 backlight brightness"],
+  ["POST", "/extensions/lcd1602/brightness", "Set LCD 1602 backlight brightness"],
+  ["GET", "/extensions/lcd1602/color", "LCD 1602 RGB backlight color (PCA9633)"],
+  ["POST", "/extensions/lcd1602/color", "Set LCD 1602 RGB backlight color"],
 ] as const;
 
 export function ApiReference() {
@@ -132,6 +139,47 @@ export function ApiReference() {
           </tr>
           <tr>
             <td>
+              <code>lcd1602</code>
+            </td>
+            <td>boolean</td>
+            <td>Waveshare LCD1602 I2C extension (default false; immediate)</td>
+          </tr>
+          <tr>
+            <td>
+              <code>lcd1602_backlight_sleep</code>
+            </td>
+            <td>boolean</td>
+            <td>Dim backlight on sleep / light on wake (default true; immediate)</td>
+          </tr>
+          <tr>
+            <td>
+              <code>lcd1602_welcome_hello</code>
+            </td>
+            <td>boolean</td>
+            <td>HELLO/HUMAN overlay during welcome (default false; immediate)</td>
+          </tr>
+          <tr>
+            <td>
+              <code>lcd1602_boot</code>
+            </td>
+            <td>string</td>
+            <td>
+              Boot content: <code>none</code>, <code>last</code>, or <code>config</code> (default{" "}
+              <code>none</code>; immediate)
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>lcd1602_line1</code> / <code>lcd1602_line2</code>
+            </td>
+            <td>string</td>
+            <td>
+              Configured boot lines when boot is <code>config</code> (max 64 bytes, no C0 control
+              bytes; immediate)
+            </td>
+          </tr>
+          <tr>
+            <td>
               <code>continuous_timeout</code>
             </td>
             <td>integer</td>
@@ -152,8 +200,8 @@ export function ApiReference() {
             </td>
             <td>string</td>
             <td>
-              <code>classic</code>, <code>kaomoji</code>, <code>cover</code>, <code>dots</code>, or{" "}
-              <code>kawaii</code> (OLED eyes look; immediate)
+              <code>classic</code>, <code>kaomoji</code>, <code>cover</code>, <code>dots</code>,{" "}
+              <code>kawaii</code>, or <code>evil</code> (OLED eyes look; immediate)
             </td>
           </tr>
           <tr>
@@ -210,6 +258,16 @@ export function ApiReference() {
               Setup AP only; default <code>false</code>
             </td>
           </tr>
+          <tr>
+            <td>
+              <code>face_pose</code>
+            </td>
+            <td>number array</td>
+            <td>
+              Three numbers -1 to 1 (<code>head, neck, body</code>), or <code>[]</code> to clear;
+              default <code>[]</code> (not set)
+            </td>
+          </tr>
         </tbody>
       </table>
       <p>
@@ -220,8 +278,8 @@ export function ApiReference() {
         (credentials not saved), control APIs return <strong>503</strong>{" "}
         <code>not provisioned</code>; <code>POST /setup/servo</code>, <code>POST /setup/led</code>,{" "}
         <code>POST /setup/audio</code>, and <code>POST /setup/oled</code> stay available. Servo
-        ranges, RGB mapping, and screen rotation survive factory reset and can be retuned in the
-        setup wizard.
+        ranges, face me pose, RGB mapping, and screen rotation survive factory reset and can be
+        retuned in the setup wizard.
       </p>
       <p>
         <code>GET</code>/<code>PUT /settings/actions</code> — JSON object with array{" "}
@@ -274,6 +332,12 @@ export function ApiReference() {
             <td>
               Speaking gesture; soft torso shifts (audio-reactive during <code>/play</code>)
             </td>
+          </tr>
+          <tr>
+            <td>
+              <code>waiting</code>
+            </td>
+            <td>Turned to the left, taps the desk with the left hand, looks around</td>
           </tr>
           <tr>
             <td>
@@ -360,6 +424,12 @@ export function ApiReference() {
               <code>thinking</code>
             </td>
             <td>Thinking gesture</td>
+          </tr>
+          <tr>
+            <td>
+              <code>waiting</code>
+            </td>
+            <td>Waiting gesture</td>
           </tr>
           <tr>
             <td>

@@ -38,6 +38,12 @@ export interface Settings {
   serial_log: boolean;
   push_button: boolean;
   push_button_pin: number;
+  lcd1602: boolean;
+  lcd1602_backlight_sleep: boolean;
+  lcd1602_welcome_hello: boolean;
+  lcd1602_boot: "none" | "last" | "config";
+  lcd1602_line1: string;
+  lcd1602_line2: string;
   continuous_timeout: number;
   loading: LoadingMode;
   eyes_style: string;
@@ -48,6 +54,8 @@ export interface Settings {
   servo_maxs: number[];
   rgb_order: string;
   oled_rotate_180: boolean;
+  // [head, neck, body] in -1..1, or [] when no face pose is set.
+  face_pose: number[];
   wifi_networks: string[];
   reboot_required?: boolean;
   wifi_connect_success?: boolean;

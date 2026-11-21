@@ -10,6 +10,7 @@ namespace {
 
 // Stored as min,max pairs, one per servo.
 constexpr size_t kServoRangesLen = SETTINGS_SERVO_COUNT * 2;
+constexpr size_t kFacePoseLen = SETTINGS_FACE_POSE_COUNT * sizeof(float);
 
 template <size_t N>
 void loadText(char (&dest)[N], const char* key, bool (*valid)(const char*)) {
@@ -77,6 +78,22 @@ void SettingsValues::load() {
   loadText(pushButtonSoundDoubleClick, kKeyBtnSndDbl, settingsValidatePushButtonSound);
   loadText(pushButtonSoundLongClick, kKeyBtnSndLng, settingsValidatePushButtonSound);
 
+  if (g_settingsPrefs.isKey(kKeyLcd1602)) {
+    lcd1602 = g_settingsPrefs.getBool(kKeyLcd1602, lcd1602);
+  }
+
+  if (g_settingsPrefs.isKey(kKeyLcd1602Bl)) {
+    lcd1602BacklightSleep = g_settingsPrefs.getBool(kKeyLcd1602Bl, lcd1602BacklightSleep);
+  }
+
+  if (g_settingsPrefs.isKey(kKeyLcd1602Hi)) {
+    lcd1602WelcomeHello = g_settingsPrefs.getBool(kKeyLcd1602Hi, lcd1602WelcomeHello);
+  }
+
+  loadText(lcd1602Boot, kKeyLcd1602Boot, settingsValidateLcd1602Boot);
+  loadText(lcd1602Line1, kKeyLcd1602L1, settingsValidateLcd1602Line);
+  loadText(lcd1602Line2, kKeyLcd1602L2, settingsValidateLcd1602Line);
+
   loadMinutes(continuousTimeoutMin, kKeyContTo, settingsValidateContinuousTimeout);
   loadText(loading, kKeyLoading, settingsValidateLoading);
   loadText(eyesStyle, kKeyEyesStyle, settingsValidateEyesStyle);
@@ -105,6 +122,16 @@ void SettingsValues::load() {
 
   if (g_settingsPrefs.isKey(kKeyOledRot)) {
     oledRotate180 = g_settingsPrefs.getBool(kKeyOledRot, oledRotate180);
+  }
+
+  if (g_settingsPrefs.isKey(kKeyFacePose)) {
+    FacePose stored{};
+    stored.set = g_settingsPrefs.getBytes(kKeyFacePose, stored.values, kFacePoseLen) ==
+                 kFacePoseLen;
+
+    if (stored.set && stored.valid()) {
+      facePose = stored;
+    }
   }
 }
 
@@ -136,7 +163,13 @@ bool writeValues(const SettingsValues& values, const SettingsValues& before, boo
   };
   auto putText = [&](const char* key, const char* value, const char* old) {
     if (all || strcmp(value, old) != 0) {
-      ok &= g_settingsPrefs.putString(key, value) == strlen(value);
+      // putString("") returns 0 on both success and failure; remove reports clearly.
+      // Missing key loads as the in-memory default (empty for LCD lines / token).
+      if (value[0] == '\0') {
+        ok &= !g_settingsPrefs.isKey(key) || g_settingsPrefs.remove(key);
+      } else {
+        ok &= g_settingsPrefs.putString(key, value) == strlen(value);
+      }
     }
   };
 
@@ -147,6 +180,12 @@ bool writeValues(const SettingsValues& values, const SettingsValues& before, boo
   putBool(kKeySerialLog, values.serialLog, before.serialLog);
   putBool(kKeyPushButton, values.pushButton, before.pushButton);
   putUInt(kKeyPushButtonPin, values.pushButtonPin, before.pushButtonPin);
+  putBool(kKeyLcd1602, values.lcd1602, before.lcd1602);
+  putBool(kKeyLcd1602Bl, values.lcd1602BacklightSleep, before.lcd1602BacklightSleep);
+  putBool(kKeyLcd1602Hi, values.lcd1602WelcomeHello, before.lcd1602WelcomeHello);
+  putText(kKeyLcd1602Boot, values.lcd1602Boot, before.lcd1602Boot);
+  putText(kKeyLcd1602L1, values.lcd1602Line1, before.lcd1602Line1);
+  putText(kKeyLcd1602L2, values.lcd1602Line2, before.lcd1602Line2);
   putUInt(kKeyContTo, values.continuousTimeoutMin, before.continuousTimeoutMin);
   putText(kKeyLoading, values.loading, before.loading);
   putText(kKeyEyesStyle, values.eyesStyle, before.eyesStyle);
@@ -164,6 +203,18 @@ bool writeValues(const SettingsValues& values, const SettingsValues& before, boo
     }
 
     ok &= g_settingsPrefs.putBytes(kKeyServoRanges, blob, kServoRangesLen) == kServoRangesLen;
+  }
+
+  const FacePose& face = values.facePose;
+  const FacePose& oldFace = before.facePose;
+  const bool faceChanged = face.set != oldFace.set ||
+    (face.set && memcmp(face.values, oldFace.values, kFacePoseLen) != 0);
+
+  if (all || faceChanged) {
+    // Not set = no key. Preferences writes nothing for an empty blob.
+    ok &= face.set
+      ? g_settingsPrefs.putBytes(kKeyFacePose, face.values, kFacePoseLen) == kFacePoseLen
+      : !g_settingsPrefs.isKey(kKeyFacePose) || g_settingsPrefs.remove(kKeyFacePose);
   }
 
   return ok;
@@ -270,9 +321,10 @@ bool saveActions(const ActionList& actions) {
 }
 
 bool factoryResetSettings() {
-  // The hardware calibration survives a reset.
+  // The hardware calibration and desk face pose survive a reset.
   SettingsValues next = SettingsValues::defaults();
   next.servoRanges = g_settings.servoRanges;
+  next.facePose = g_settings.facePose;
   strlcpy(next.rgbOrder, g_settings.rgbOrder, sizeof(next.rgbOrder));
   next.oledRotate180 = g_settings.oledRotate180;
 

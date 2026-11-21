@@ -6,11 +6,11 @@ Listens on **port 80** after STA Wi-Fi connects, or during setup AP mode at `htt
 
 Outbound events (device → host) use a separate WebSocket on **port 81** at path `/events` while this HTTP server is running, and the same JSON on USB serial as `Evt` frames. See [Outbound events](#outbound-events).
 
-Optional auth: when an `access_token` is configured in settings, all JSON API routes require `Authorization: Bearer <token>`. Empty token (default) means no auth. `GET /auth` is always public and reports whether auth is required. Missing/wrong token → **401** `{"ok":false,"error":"unauthorized"}`. HTML panel routes stay public (the UI prompts for the token). Replies are `Content-Type: application/json`. Routes that take parameters (except `POST /anim` and `/play`) read a JSON object body sent with `Content-Type: application/json`; query parameters or form fields on those routes → **400** `send a JSON body with Content-Type: application/json`, and a body that is not a JSON object → **400** `body must be a JSON object`. CORS: requests with an `Origin` header get `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Headers: Authorization, Content-Type` and `Access-Control-Allow-Methods: GET, POST, PUT, OPTIONS`; a preflight `OPTIONS` gets **200**.
+Optional auth: when an `access_token` is configured in settings, all JSON API routes require `Authorization: Bearer <token>`. Empty token (default) means no auth. `GET /auth` is always public and reports whether auth is required. Missing/wrong token → **401** `{"ok":false,"error":"unauthorized"}`. HTML panel routes stay public (the UI prompts for the token). Replies are `Content-Type: application/json`. Routes that take parameters (except `POST /anim` and `/play`) read a JSON object body sent with `Content-Type: application/json`; query parameters or form fields on those routes → **400** `send a JSON body with Content-Type: application/json`, and a body that is not a JSON object → **400** `body must be a JSON object`. CORS: requests with an `Origin` header get `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Headers: Authorization, Content-Type` and `Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS`; a preflight `OPTIONS` gets **200**.
 
 When the robot is not yet provisioned (no connection mode chosen), control APIs (`/anim`, `/test/*`, `/play`) return **503** `{"ok":false,"error":"not provisioned"}`. Setup routes (`/`, `/config`, `/auth`, `/health`, `/settings`, `/setup/servo`, `/setup/led`, `/setup/audio`, `/setup/oled`, `/servos/park`) stay available on the setup AP. Connection mode is `wifi` or `usb` (`link_mode` in settings/auth/health). USB-only mode disables Wi‑Fi station and the HTTP API after reboot; control then uses the USB serial protocol ([serial.md](serial.md)).
 
-If boot WiFi credentials are missing, the device opens setup AP mode (`TinyEngineer-XXXX`) and serves a five-step setup wizard at `/config` (servo hub: guided calibration / skip / assembly centering, then OLED orientation, RGB LED, speaker test, then connection). If saved credentials fail, it reopens setup AP mode. The setup AP acts as a captive portal: DHCP sends the portal URL (option 114) and DNS answers every name with the AP IP, so a phone that joins the network opens the wizard on its own. Hardware tests: [`docs/hardware/testing.md`](hardware/testing.md). How to wire this API into AI tools: [`integration.md`](integration.md).
+If boot WiFi credentials are missing, the device opens setup AP mode (`TinyEngineer-XXXX`) and serves a five-step setup wizard at `/config` (servo hub: guided calibration including a final "face me" pose, or skip / assembly centering — skip skips face me too — then OLED orientation, RGB LED, speaker test, then connection). If saved credentials fail, it reopens setup AP mode. The setup AP acts as a captive portal: DHCP sends the portal URL (option 114) and DNS answers every name with the AP IP, so a phone that joins the network opens the wizard on its own. Hardware tests: [`docs/hardware/testing.md`](hardware/testing.md). How to wire this API into AI tools: [`integration.md`](integration.md).
 
 Firmware answers mDNS A and AAAA (IPv6 link-local) so macOS does not wait 2–3s on a missing AAAA. If a client still pauses on the hostname, force IPv4 (`curl -4`). The IP on the OLED skips DNS entirely.
 
@@ -171,6 +171,12 @@ curl http://tiny-engineer.local/settings
   "serial_log": false,
   "push_button": false,
   "push_button_pin": 20,
+  "lcd1602": false,
+  "lcd1602_backlight_sleep": true,
+  "lcd1602_welcome_hello": false,
+  "lcd1602_boot": "none",
+  "lcd1602_line1": "",
+  "lcd1602_line2": "",
   "continuous_timeout": 5,
   "loading": "progress",
   "eyes_style": "classic",
@@ -181,6 +187,7 @@ curl http://tiny-engineer.local/settings
   "servo_maxs": [100, 100, 100, 100, 100],
   "rgb_order": "GRB",
   "oled_rotate_180": false,
+  "face_pose": [],
   "wifi_networks": ["MyNetwork", "Office"]
 }
 ```
@@ -194,9 +201,14 @@ curl http://tiny-engineer.local/settings
 | `serial_log` | USB serial debug logging (default **false**). When off, diagnostic `Serial` output is suppressed |
 | `push_button` | Extension-port push-button reader (default **false**). When on, publishes immediate `button.down` / `button.up` plus `button.click` / `button.double_click` / `button.long_click` (see [Outbound events](#outbound-events)). Applies **immediately**. Local reactions use [Actions](#get-settingsactions) |
 | `push_button_pin` | GPIO on the Extension port for the push-button: **6**, **7**, **20**, or **21** (default **20**). Persists when `push_button` is off. Applies **immediately** when the extension is on |
-| `continuous_timeout` | Minutes a continuous animation (`typing` / `reading` / `thinking` / `talking`) may run before the firmware switches to `attention` then idle (default **5**) |
+| `lcd1602` | Waveshare LCD1602 I2C extension (default **false**). When on, serves `/extensions/lcd1602/…`. Applies **immediately**. Emits no events |
+| `lcd1602_backlight_sleep` | Follow sleep: dim backlight on sleep and light to **100** on wake (default **true**). When false, enable/boot turns backlight on (including when `last` brightness is 0) and sleep/wake leave brightness alone. Persists when off. Applies **immediately** |
+| `lcd1602_welcome_hello` | Show centered **HELLO** / **HUMAN** on the LCD during every `welcome` animation (default **false**). Text/clear during the overlay queues (last-wins); `GET` returns logical stash/pending, not HELLO. Persists when off. Applies **immediately** |
+| `lcd1602_boot` | Boot content: `none`, `last`, or `config` (default **`none`**). Persists when off. Applies **immediately** |
+| `lcd1602_line1` / `lcd1602_line2` | Configured boot lines when `lcd1602_boot` is `config` (max **64** bytes each, no C0 control bytes, default empty). Persists when off. Applies **immediately** |
+| `continuous_timeout` | Minutes a continuous animation (`typing` / `reading` / `thinking` / `talking` / `waiting`) may run before the firmware switches to `attention` then idle (default **5**) |
 | `loading` | Boot loading screen: `progress` (bar + large IP for 3 s) or `sleep_inertia` (eyes wake; no bar/IP). Default **`progress`**. Applies on **next reboot** |
-| `eyes_style` | OLED eyes look: `classic` (procedural rounded eyes), `kaomoji` (animated faces), `cover` (full-half bars for an eye-hole mask), `dots` (12×12 circles), or `kawaii` (round eyes with big moving pupils, a talking mouth, and blush). Default **`classic`**. Applies **immediately**. Classic, cover, and dots sequences are described under [`POST /anim`](#post-anim); kaomoji face mapping is under [Kaomoji eyes](#kaomoji-eyes); cover drawing is under [Cover eyes](#cover-eyes); dots drawing is under [Dots eyes](#dots-eyes); kawaii moods are under [Kawaii eyes](#kawaii-eyes) |
+| `eyes_style` | OLED eyes look: `classic` (procedural rounded eyes), `kaomoji` (animated faces), `cover` (full-half bars for an eye-hole mask), `dots` (12×12 circles), `kawaii` (round eyes with big moving pupils, a talking mouth, and blush), or `evil` (solid white scowling silhouettes). Default **`classic`**. Applies **immediately**. Classic, cover, and dots sequences are described under [`POST /anim`](#post-anim); kaomoji face mapping is under [Kaomoji eyes](#kaomoji-eyes); cover drawing is under [Cover eyes](#cover-eyes); dots drawing is under [Dots eyes](#dots-eyes); kawaii moods are under [Kawaii eyes](#kawaii-eyes); evil drawing is under [Evil eyes](#evil-eyes) |
 | `access_token_set` | `true` when a non-empty access token is stored (secret itself is never returned) |
 | `link_mode` | `""` unprovisioned, `"wifi"`, or `"usb"` (connection mode; see [`serial.md`](serial.md)) |
 | `wifi_configured` | `true` when at least one WiFi network is saved |
@@ -205,11 +217,12 @@ curl http://tiny-engineer.local/settings
 | `servo_maxs` | Per-joint safe maximum degrees (stock defaults **100, 100, 100, 100, 100**). Each max must be greater than the matching min |
 | `rgb_order` | Onboard WS2812 wire-byte order (`RGB`, `RBG`, `GRB`, `GBR`, `BRG`, `BGR`). Default **`GRB`**. Survives factory reset |
 | `oled_rotate_180` | OLED 180° rotation (`true` → `setRotation(2)`). Default **`false`**. Setup AP only. Survives factory reset |
+| `face_pose` | Optional "face me" pose `[head, neck, body]` in animation units (`-1` = saved min, `0` = mid, `1` = saved max) that points the robot at the user. `[]` = not set (default). When set, `talking` and `attention` rest and move around it; when not set, those animations keep their stock rests. Relative to the saved servo ranges, so check it again after a servo calibration. Survives factory reset. See [robot-movement.md](robot-movement.md#face-me) |
 | `reboot_required` | `true` once the saved `hostname`, `loading` or WiFi networks differ from what this boot started with; those apply only after a reboot |
 
 ### `POST /settings`
 
-Update one or more settings from a JSON object body. Values are written to NVS. `sleep_timeout`, `volume`, `welcome`, `serial_log`, `push_button`, `push_button_pin`, `continuous_timeout`, `eyes_style`, and `access_token` apply immediately; a changed `hostname` or `loading` takes effect on the **next reboot**. WiFi networks are set with [`PUT /settings/wifi`](#put-settingswifi). On-device Actions are set with [`PUT /settings/actions`](#put-settingsactions). Servo ranges (`servo_mins` + `servo_maxs`), RGB LED mapping (`rgb_order`) and OLED rotation (`oled_rotate_180`) are **setup AP only** and apply immediately. Requires Bearer when auth is enabled.
+Update one or more settings from a JSON object body. Values are written to NVS. `sleep_timeout`, `volume`, `welcome`, `serial_log`, `push_button`, `push_button_pin`, `lcd1602`, `lcd1602_backlight_sleep`, `lcd1602_welcome_hello`, `lcd1602_boot`, `lcd1602_line1`, `lcd1602_line2`, `continuous_timeout`, `eyes_style`, `access_token`, and `face_pose` apply immediately (`face_pose` from the next time `talking` or `attention` starts); a changed `hostname` or `loading` takes effect on the **next reboot**. WiFi networks are set with [`PUT /settings/wifi`](#put-settingswifi). On-device Actions are set with [`PUT /settings/actions`](#put-settingsactions). Servo ranges (`servo_mins` + `servo_maxs`), RGB LED mapping (`rgb_order`) and OLED rotation (`oled_rotate_180`) are **setup AP only** and apply immediately. Requires Bearer when auth is enabled.
 
 ```bash
 curl -X POST "http://tiny-engineer.local/settings" \
@@ -217,7 +230,13 @@ curl -X POST "http://tiny-engineer.local/settings" \
   -d '{"volume":40,"welcome":false,"eyes_style":"kaomoji"}'
 curl -X POST "http://tiny-engineer.local/settings" \
   -H "Content-Type: application/json" \
+  -d '{"lcd1602":true,"lcd1602_boot":"config","lcd1602_line1":"HELLO","lcd1602_line2":"HUMAN"}'
+curl -X POST "http://tiny-engineer.local/settings" \
+  -H "Content-Type: application/json" \
   -d '{"access_token":""}'
+curl -X POST "http://tiny-engineer.local/settings" \
+  -H "Content-Type: application/json" \
+  -d '{"face_pose":[0.15,-0.3,0.1]}'
 curl -X POST "http://192.168.4.1/settings" \
   -H "Content-Type: application/json" \
   -d '{"servo_mins":[80,80,80,80,80],"servo_maxs":[100,100,100,100,100],"rgb_order":"GRB","oled_rotate_180":true}'
@@ -233,6 +252,12 @@ curl -X POST "http://192.168.4.1/settings" \
   "serial_log": false,
   "push_button": false,
   "push_button_pin": 20,
+  "lcd1602": false,
+  "lcd1602_backlight_sleep": true,
+  "lcd1602_welcome_hello": false,
+  "lcd1602_boot": "none",
+  "lcd1602_line1": "",
+  "lcd1602_line2": "",
   "continuous_timeout": 5,
   "loading": "progress",
   "eyes_style": "classic",
@@ -243,6 +268,7 @@ curl -X POST "http://192.168.4.1/settings" \
   "servo_maxs": [100, 100, 100, 100, 100],
   "rgb_order": "GRB",
   "oled_rotate_180": false,
+  "face_pose": [0.15, -0.3, 0.1],
   "wifi_networks": ["MyNetwork"],
   "reboot_required": true
 }
@@ -257,17 +283,23 @@ curl -X POST "http://192.168.4.1/settings" \
 | `serial_log` | boolean | USB serial debug logging |
 | `push_button` | boolean | Extension-port push-button (default **false**) |
 | `push_button_pin` | integer | Extension-port GPIO **6**, **7**, **20**, or **21** (default **20**); persists when off |
+| `lcd1602` | boolean | Waveshare LCD1602 extension (default **false**) |
+| `lcd1602_backlight_sleep` | boolean | Dim on sleep / light on wake (default **true**) |
+| `lcd1602_welcome_hello` | boolean | HELLO/HUMAN on welcome (default **false**) |
+| `lcd1602_boot` | string | `none` / `last` / `config` (default **`none`**) |
+| `lcd1602_line1` / `lcd1602_line2` | string | Boot lines for `config` (max **64** bytes, no C0 control bytes) |
 | `continuous_timeout` | integer | 1–1440 minutes (positive) |
 | `loading` | string | `progress` or `sleep_inertia` |
-| `eyes_style` | string | `classic`, `kaomoji`, `cover`, `dots`, or `kawaii` |
+| `eyes_style` | string | `classic`, `kaomoji`, `cover`, `dots`, `kawaii`, or `evil` |
 | `access_token` | string | 0–64 printable ASCII, no space at either end; empty string clears the token and disables auth. Setting or rotating a non-empty value disconnects WebSocket `/events` subscribers (they must reconnect with the new token); clearing does not |
 | `link_mode` | string | `wifi` or `usb`; setup Connection step uses `usb` for USB-only; Wi-Fi mode is usually set when saving networks via [`PUT /settings/wifi`](#put-settingswifi) |
 | `servo_mins` | integer array | Five integers `0`–`180` (`head, neck, left, right, body`); setup AP only; must be sent with `servo_maxs` |
 | `servo_maxs` | integer array | Five integers `0`–`180`; setup AP only; each value must be greater than the matching min |
 | `rgb_order` | string | `RGB`, `RBG`, `GRB`, `GBR`, `BRG`, or `BGR`; setup AP only; default `GRB` |
 | `oled_rotate_180` | boolean | Setup AP only; default `false` |
+| `face_pose` | number array | Three numbers -1 to 1 (`head, neck, body`), or `[]` to clear; default `[]` (not set) |
 
-Leave out a field to keep its saved value. An empty object → **400** `send at least one setting`. A field this route does not know → **400** `unknown field <field>`. A field with the wrong type or out of range → **400** `invalid <field>` (servo ranges that overlap or exceed 180: `invalid servo_mins or servo_maxs`). Only one of `servo_mins` / `servo_maxs` → **400** `servo_mins and servo_maxs go together`. Enabling extensions (or changing their pins) so two enabled extensions would share a GPIO → **400** `pin conflict on GP… (…)` and nothing is saved. Outside setup AP mode, servo ranges → **400** `servo setup only in AP mode`, `rgb_order` → **400** `rgb setup only in AP mode`, `oled_rotate_180` → **400** `oled setup only in AP mode`. On any 400, nothing is saved. Replies carry `reboot_required` as in `GET /settings`.
+Leave out a field to keep its saved value. An empty object → **400** `send at least one setting`. A field this route does not know → **400** `unknown field <field>`. A field with the wrong type or out of range → **400** `invalid <field>` (servo ranges that overlap or exceed 180: `invalid servo_mins or servo_maxs`; a `face_pose` that is not `[]` or three numbers in -1..1: `invalid face_pose`). Only one of `servo_mins` / `servo_maxs` → **400** `servo_mins and servo_maxs go together`. Enabling extensions (or changing their pins) so two enabled extensions would share a GPIO → **400** `pin conflict on GP… (…)` and nothing is saved. Outside setup AP mode, servo ranges → **400** `servo setup only in AP mode`, `rgb_order` → **400** `rgb setup only in AP mode`, `oled_rotate_180` → **400** `oled setup only in AP mode`. On any 400, nothing is saved. Replies carry `reboot_required` as in `GET /settings`.
 
 ### `PUT /settings/wifi`
 
@@ -334,7 +366,7 @@ curl -X POST "http://tiny-engineer.local/actions/test" \
 
 ### `POST /settings/reset`
 
-Factory reset: clears the NVS `te` namespace and restores settings to compile-time defaults and clears every saved WiFi network and Actions list. **Servo min/max, RGB LED mapping (`rgb_order`), and OLED rotation (`oled_rotate_180`) are kept.** Internal last-pose blob (`spose`) is cleared/reset with defaults. After reset, power-cycle (or press reset) so the device reopens setup AP mode and WiFi can be configured again; the servo, screen, and LED steps are pre-filled with the saved values and can be retuned. Until reboot, credentials are cleared in NVS but the radio may still be on the previous STA network. No body. Requires Bearer when auth is enabled. Same JSON shape as `GET /settings`.
+Factory reset: clears the NVS `te` namespace and restores settings to compile-time defaults and clears every saved WiFi network and Actions list. **Servo min/max, face pose (`face_pose`), RGB LED mapping (`rgb_order`), and OLED rotation (`oled_rotate_180`) are kept.** Internal last-pose blob (`spose`) is cleared/reset with defaults. After reset, power-cycle (or press reset) so the device reopens setup AP mode and WiFi can be configured again; the servo, screen, and LED steps are pre-filled with the saved values and can be retuned. Until reboot, credentials are cleared in NVS but the radio may still be on the previous STA network. No body. Requires Bearer when auth is enabled. Same JSON shape as `GET /settings`.
 
 The Config web UI clears the browser-stored Bearer token and shows a one-shot gate: power-cycle the device, then join the robot WiFi shown on the OLED and open the setup wizard. It does not poll for reconnect.
 
@@ -352,6 +384,12 @@ curl -X POST "http://tiny-engineer.local/settings/reset"
   "serial_log": false,
   "push_button": false,
   "push_button_pin": 20,
+  "lcd1602": false,
+  "lcd1602_backlight_sleep": true,
+  "lcd1602_welcome_hello": false,
+  "lcd1602_boot": "none",
+  "lcd1602_line1": "",
+  "lcd1602_line2": "",
   "continuous_timeout": 5,
   "loading": "progress",
   "eyes_style": "classic",
@@ -361,6 +399,7 @@ curl -X POST "http://tiny-engineer.local/settings/reset"
   "servo_maxs": [100, 100, 100, 100, 100],
   "rgb_order": "GRB",
   "oled_rotate_180": false,
+  "face_pose": [],
   "wifi_networks": [],
   "reboot_required": true
 }
@@ -538,6 +577,87 @@ Wrong fields return **400**:
 
 Save with `POST /settings` `{"oled_rotate_180":true}` (setup AP only). The saved value applies immediately and on the next boot.
 
+### LCD 1602 extension (`/extensions/lcd1602/…`)
+
+Waveshare LCD1602 I2C (AiP31068 @ `0x3E`; controllable backlight SN3193 @ `0x6B` or PCA9633 @ `0x60`, auto-detected) on the Extension I2C port. Off until `lcd1602` is true. Same access class as `POST /anim` (`Configured`). When the extension is off → **503** `extension disabled`. When on but the LCD (`0x3E`) does not ACK → text **POST**/`DELETE` **503** `lcd not found` (settings stay enabled); **GET** text still returns the cached logical state with **200**. When the LCD is up but neither backlight chip ACKs → brightness **POST** **503** `backlight not found`; **GET** brightness still returns the cached value with **200**. On PCA9633, brightness scales the base RGB color (`PWM = channel × brightness / 100`); use `/color` for base R/G/B. Color on SN3193 → **400** `rgb not supported`. When `lcd1602_backlight_sleep` is true, entering sleep (`sleep` anim or idle `sleep_timeout`) fades backlight to **0** over ~2 s; wakeup / wake-from-sleep fades to **100** over ~2 s (persists last state). When false, sleep/wake do not change backlight. When `lcd1602_welcome_hello` is true, every `welcome` animation overlays centered **HELLO** / **HUMAN**; text/clear during that overlay queues until welcome ends; `GET` text returns logical content (pending or pre-overlay), not HELLO. No outbound events.
+
+#### `GET` / `POST` / `DELETE /extensions/lcd1602/text`
+
+`GET` returns the full logical lines (not only the 16-column viewport), including when the LCD does not ACK (**200** cached state). `POST` / `DELETE` without an ACK → **503** `lcd not found`.
+
+```json
+{
+  "line1": { "text": "HELLO", "align": "left" },
+  "line2": { "text": "", "align": "left" }
+}
+```
+
+`POST` accepts a partial JSON body. Omitted `line1` / `line2` leave that line unchanged. Each present line object needs `text` (0–64 bytes; empty clears the line; no C0 control bytes `0x00`–`0x1F`) and optional `align` (`left` / `right` / `center`, default **`left`**). Lines longer than 16 characters ignore align and marquee LTR.
+
+```bash
+curl -X POST "http://tiny-engineer.local/extensions/lcd1602/text" \
+  -H "Content-Type: application/json" \
+  -d '{"line1":{"text":"HELLO","align":"center"}}'
+```
+
+Wrong fields return **400** and do not change the display:
+
+| `error` | When |
+| --- | --- |
+| `invalid text` | `text` missing, not a string, longer than 64 bytes, or contains a C0 control byte (e.g. `\n`) |
+| `invalid align` | `align` present but not `left` / `right` / `center` |
+| `invalid line` | `line1` / `line2` present but not a JSON object |
+| `send at least one line` | Body has neither `line1` nor `line2` |
+| `unknown field …` | Any key other than `line1` / `line2` |
+
+`DELETE` clears both lines and leaves brightness unchanged.
+
+#### `GET` / `POST /extensions/lcd1602/brightness`
+
+`GET` → `{"brightness":50}` (cached logical value; **200** even when no backlight chip ACKs). `POST` body `{"brightness":0..100}` (0 = backlight off). On PCA9633, brightness scales the stored base color (default white `255,255,255`). Successful text/clear/brightness/color updates persist **last** state for `lcd1602_boot=last`.
+
+```bash
+curl -X POST "http://tiny-engineer.local/extensions/lcd1602/brightness" \
+  -H "Content-Type: application/json" \
+  -d '{"brightness":50}'
+```
+
+```json
+{ "brightness": 50 }
+```
+
+Wrong fields return **400**:
+
+| `error` | When |
+| --- | --- |
+| `invalid brightness` | `brightness` missing, not an integer, or outside `0`–`100` |
+| `unknown field …` | Any key other than `brightness` |
+
+Neither SN3193 nor PCA9633 ACK on **POST** → **503** `backlight not found`.
+
+#### `GET` / `POST /extensions/lcd1602/color`
+
+PCA9633 RGB modules only. `GET` → `{"r":255,"g":255,"b":255}`. `POST` body `{"r":0..255,"g":0..255,"b":0..255}` sets the base color (PWM scaled by current brightness).
+
+```bash
+curl -X POST "http://tiny-engineer.local/extensions/lcd1602/color" \
+  -H "Content-Type: application/json" \
+  -d '{"r":255,"g":128,"b":0}'
+```
+
+```json
+{ "r": 255, "g": 128, "b": 0 }
+```
+
+Wrong fields or unsupported hardware return **400** / **503**:
+
+| `error` | Status | When |
+| --- | --- | --- |
+| `invalid r` / `invalid g` / `invalid b` | **400** | Channel missing or not an integer `0`–`255` |
+| `unknown field …` | **400** | Any key other than `r` / `g` / `b` |
+| `rgb not supported` | **400** | Backlight is SN3193 (or other non-RGB chip) |
+| `backlight not found` | **503** | No backlight chip ACK |
+
 ### `POST /servos/park`
 
 Flash-safe park: stop the current animation, smoothly move every joint to its calibrated mid, persist the pose to NVS, and keep PWM enabled until the next reboot (skips idle limp). No body. Requires Bearer when auth is enabled. Available in setup AP and after provisioning (does not require a chosen connection mode).
@@ -593,7 +713,7 @@ curl http://tiny-engineer.local/anim
 
 | Field | Meaning |
 | --- | --- |
-| `animation` | `none`, `typing`, `reading`, `thinking`, `talking`, `ring`, `welcome`, `attention`, `error`, `abort`, `dead`, `wakeup`, or `sleep` |
+| `animation` | `none`, `typing`, `reading`, `thinking`, `talking`, `waiting`, `ring`, `welcome`, `attention`, `error`, `abort`, `dead`, `wakeup`, or `sleep` |
 
 ### `POST /anim`
 
@@ -601,7 +721,7 @@ Request an animation switch. Each animation runs at least **1s**; if the current
 
 | Param | Type | Values |
 | --- | --- | --- |
-| `name` | string | `none`, `typing`, `reading`, `thinking`, `talking`, `ring`, `welcome`, `attention`, `error`, `abort`, `dead`, `wakeup`, `sleep` |
+| `name` | string | `none`, `typing`, `reading`, `thinking`, `talking`, `waiting`, `ring`, `welcome`, `attention`, `error`, `abort`, `dead`, `wakeup`, `sleep` |
 
 ```bash
 curl -X POST "http://tiny-engineer.local/anim?name=typing"
@@ -623,7 +743,7 @@ curl -X POST "http://tiny-engineer.local/anim?name=none"
 { "ok": true, "animation": "typing" }
 ```
 
-Eye detail below for `eyes_style=classic` (default). With `eyes_style=cover`, the same sequences drive full-half bars ([Cover eyes](#cover-eyes)). With `eyes_style=dots`, the same sequences drive 12×12 circles ([Dots eyes](#dots-eyes)). With `eyes_style=kawaii`, the same sequences move and blink a kawaii face whose expression follows the animation and whose mouth says the voice clips ([Kawaii eyes](#kawaii-eyes)). With `eyes_style=kaomoji`, faces follow [Kaomoji eyes](#kaomoji-eyes) instead of procedural blinks, glances, flicker, or X eyes. Servo/audio behavior is the same for every style.
+Eye detail below for `eyes_style=classic` (default). With `eyes_style=cover`, the same sequences drive full-half bars ([Cover eyes](#cover-eyes)). With `eyes_style=dots`, the same sequences drive 12×12 circles ([Dots eyes](#dots-eyes)). With `eyes_style=kawaii`, the same sequences move and blink a kawaii face whose expression follows the animation and whose mouth says the voice clips ([Kawaii eyes](#kawaii-eyes)). With `eyes_style=evil`, the same sequences drive solid white scowling silhouettes ([Evil eyes](#evil-eyes)). With `eyes_style=kaomoji`, faces follow [Kaomoji eyes](#kaomoji-eyes) instead of procedural blinks, glances, flicker, or X eyes. Servo/audio behavior is the same for every style.
 
 Durations and quoted lines below are the stock clips in [`assets/`](../assets/). A filesystem built with `custom_audio_mod` can replace some of those WAVs. Phrase timing then follows that clip's `.cue` file on LittleFS (`/welcome.cue` and the same pattern for `attention`, `error`, `abort`, and `dead`). See [flash.md](flash.md).
 
@@ -634,9 +754,10 @@ Durations and quoted lines below are the stock clips in [`assets/`](../assets/).
 | `reading` | **Continuous.** Hands/body park as in `none`. Head nods on same lowest 10° band as typing, but slower. Neck sweeps ±10° around mid; right (angle down) slower than left (angle up). Occasional right-hand down-arrow bursts (1–3 presses, same 15° band as typing). Runs until replaced, or until `continuous_timeout` triggers `attention`. Same-name re-`POST` refreshes that timeout without restarting motion. |
 | `thinking` | **Continuous.** Hands/body park as in `none`. Head (pitch) and neck (yaw) ease from the current pose into thinking poses (up + slight left/right). Move → pause → optional micro-adjust (sometimes chained) → pause; nearby pose drift with occasional larger shifts after ~2.2 s, more often over time. Axes stagger start/duration; no periodic sway. Runs until replaced, or until `continuous_timeout` triggers `attention`. Same-name re-`POST` refreshes that timeout without restarting motion. |
 | `talking` | **Continuous.** Speaking fidget with no sound of its own. Also the default pose for [`POST /play`](#post-play). Via `/anim`, the head faces the user just above mid with soft random nods, slow neck drift, occasional small torso shifts, and occasional right-hand lifts. During `/play` with pose `talking`, motion follows speech energy from the PCM stream (no extra metadata): emphasis triggers nods, silence settles the pose, phrase starts may raise the hand or shift the torso (not both). **Classic eyes:** a little taller than idle; glances away when ambient or quiet, gaze locked on the listener while speech energy is high. Runs until replaced, or until `continuous_timeout` triggers `attention`. Same-name re-`POST` refreshes that timeout without restarting motion. |
+| `waiting` | **Continuous.** Impatient wait with no sound. The torso turns to the robot's left (body `+0.8`), the right hand parks at rest, and the left hand taps the desk in groups of three (each tap lifts 0.18–0.28 of its range, groups every 2.5–8 s at random). Every 3–7 s the head eases (1.4–2.3 s) to one of four wide corners, never the same one twice: down at the tapping hand (most often), up-left, up-right, or down-right. **Classic eyes:** glance to the same corner about 180 ms before the head gets there (±5 px sideways, 3 px up / 2 px down), a little wider looking up and a little lower looking down. The Claude Code hooks use it when Claude has waited about a minute for the user (`Notification` with `idle_prompt`). Runs until replaced, or until `continuous_timeout` triggers `attention`. Same-name re-`POST` refreshes that timeout without restarting motion. |
 | `ring` | **One-shot** service-bell gesture; does not loop. Wind-up (body `min`, neck mid, head mid+10°, both hands `max`) → fast right-hand strike to `min+5°` with head to `min` → plays `bell.wav` once on strike (LittleFS; same `uploadfs` requirement as `/test/audio/bell`) → slower bounce to `min+20°` → return to `none` pose and stop. After completion, `GET /anim` reports `none`. |
 | `welcome` | **One-shot** hello gesture synced to `welcome.wav` (~2.7 s). Right hand raises during "Hello, human.", holds through the pause, wiggles during "What are we building today?", then lowers. Head nods to mid+10° and returns. Plays automatically after successful Wi-Fi connect at boot; also via API. Requires `welcome.wav` on LittleFS (same `uploadfs` flow as `bell.wav`). After completion, `GET /anim` reports `none`. |
-| `attention` | Friendly input-request gesture synced to `attention.wav` (~3.0 s, "pst... human.... you might want to take a look"). Moves into a calm prompt pose first (centered body/neck, head slightly up, right hand raised partway), waits until all servos stop, then plays audio with light neck/head/hand motion during playback (whisper hold → lean toward user → glance/point on "take a look"). **Classic eyes:** phased blink/look cues during audio. After audio ends (or if audio fails to start), holds a gentle waiting loop for **1 minute** (soft head/neck drifts plus occasional slight right-hand waves), then returns to `none`. Requires `attention.wav` on LittleFS (same `uploadfs` flow as `bell.wav`). |
+| `attention` | Friendly input-request gesture synced to `attention.wav` (~3.0 s, "pst... human.... you might want to take a look"). Moves into a calm prompt pose first (body/neck/head at the face-me pose when set, else centered body/neck and head slightly up; right hand raised partway), waits until all servos stop, then plays audio with light neck/head/hand motion during playback (whisper hold → lean toward user → glance/point on "take a look"). **Classic eyes:** phased blink/look cues during audio. After audio ends (or if audio fails to start), holds a gentle waiting loop for **1 minute** (soft head/neck drifts plus occasional slight right-hand waves), then returns to `none`. Requires `attention.wav` on LittleFS (same `uploadfs` flow as `bell.wav`). |
 | `error` | Critical task-obstacle gesture synced to `error.wav` (~2.2 s, "Uh-oh. Human, we have a problem."). Moves into an obstacle-presenting pose first (body/neck angled toward the task, head concerned/down, right hand presenting the blocker, left hand indicating task area), waits until the pose settles, then plays audio with small nervous head/neck glances during playback. After audio ends (or if audio fails to start), holds a subtle blocked loop for **1 minute**, then returns to `none`. Requires `error.wav` on LittleFS (same `uploadfs` flow as `bell.wav`). |
 | `abort` | **One-shot** resigned abort gesture synced to `abort.wav` (~2.5 s, "Fine. I didn't want to finish it anyway."). Raises both hands, lifts the head, and twists the neck sideways before audio starts. During playback it shrugs, dips the head, and adds a dismissive side twist. **Classic eyes:** matching glances/squints. Requires `abort.wav` on LittleFS (same `uploadfs` flow as `bell.wav`). After completion, returns to `none` pose and `GET /anim` reports `none`. |
 | `dead` | **Hold.** Out-of-power: same obstacle pose as `error`, then `dead.wav` (~3.4 s, "Insufficient resources, shutting doooooowwwwnnnn..."). **Classic eyes:** failing-display flicker (irregular heights + brief blank pulses, denser near the end of the first line); at ~1.7 s ("shutting down") eyes squeeze nearly shut (~300 ms) while head/hands collapse over **~500 ms**, hold shut briefly (~200 ms), then snap to **X X** while the drawn-out shutdown still plays. If audio fails to start, collapse immediately. Stays with X eyes and pulsing red until another animation is requested. **Cover:** same flicker and squeeze as height changes, then both halves stay black (no X). **Dots:** same flicker and squeeze as circle size, then X marks in 12×12 boxes. **Kaomoji:** Sad face (no X). **Kawaii:** Sad face, then `x x` eyes during the X hold. Does not auto-return to `none`. Requires `dead.wav` on LittleFS. |
@@ -649,7 +770,7 @@ When `eyes_style=kaomoji`, the OLED shows looping faces from the expression libr
 
 | Animation / phase | Face |
 | --- | --- |
-| `none` (idle) | Idle |
+| `none` (idle), `waiting` | Idle |
 | `typing`, `thinking` | Thinking |
 | `reading`, `attention` | Curious |
 | `ring` | Surprise |
@@ -668,6 +789,10 @@ When `eyes_style=cover`, each eye is a solid white rectangle filling one half of
 #### Dots eyes
 
 When `eyes_style=dots`, each eye is a filled circle. At the classic open height the circle’s bounding box is 12×12 px, centered on the classic eye. Diameter scales with rendered height (`12 * height / 14`), so blinks, squints, wide looks, and the `dead` flicker shrink or grow the dots. Height 0 draws nothing (full blink or sleep close). Glance, scan, and look-up/down move the circle with the classic center. The `dead` X hold draws X marks in 12×12 boxes at those centers. Diameter is capped at the 32 px panel height.
+
+#### Evil eyes
+
+When `eyes_style=evil`, each eye is one solid white filled silhouette on black (no pupil, iris, outline, or separate brow stroke). The outer corner ends in a sharp tip higher than the rest of that eye; the inner corner sits lower and stays rounded. The top edge has a concave brow notch (scowl); the bottom edge is a smooth convex curve. Left and right are horizontal mirrors. At the default open pose the gap between the inner corners is roughly half an eye width. Animations keep the classic pose and blink timing: height tracks the rendered classic eye (closed height draws nothing), glances move both silhouettes with the classic centers, and the look stays menacing for every mode. The `dead` X hold draws X marks in boxes centered on those eyes instead of open silhouettes.
 
 #### Kawaii eyes
 
@@ -688,6 +813,7 @@ While `welcome`, `attention`, `error`, `abort`, or `dead` plays its stock clip, 
 | `abort` | Panic: `> <` eyes, wavy mouth; says "Fine. I didn't want to finish it anyway." |
 | `wakeup` | Sleepy: heavy lids, yawn |
 | `talking` | The mouth talks in syllables, shaped as `ah` (tall), `ee` (wide), or `o` (round). With `/play` audio it opens with the speech loudness and changes shape on each syllable onset. Without audio it babbles in short phrases with pauses |
+| `waiting` | The idle smile (`ω`). The pupils follow the classic eyes to each corner the head looks at |
 | `sleep` / sleep-close | Lids close, small `ω` |
 | `dead` | Sad (lids tilted down at the outer corners, frown), then `x x` eyes during the X hold. Says "Insufficient resources... shutting doooowwwnnn" |
 
@@ -696,15 +822,15 @@ Wrong params return **400**:
 | `error` | When |
 | --- | --- |
 | `missing name` | Query param `name` absent |
-| `unknown animation` | `name` not `none`, `typing`, `reading`, `thinking`, `talking`, `ring`, `welcome`, `attention`, `error`, `abort`, `dead`, `wakeup`, or `sleep` |
+| `unknown animation` | `name` not `none`, `typing`, `reading`, `thinking`, `talking`, `waiting`, `ring`, `welcome`, `attention`, `error`, `abort`, `dead`, `wakeup`, or `sleep` |
 
 ### `POST /play`
 
-Streams a WAV to the speaker while one animation runs, then returns to the continuous animation (`typing`, `reading`, `thinking`, `talking`) that was running before the request, otherwise to `none`. The body is played as it arrives, so clips of any length need no storage on the robot. The response comes when the clip ends.
+Streams a WAV to the speaker while one animation runs, then returns to the continuous animation (`typing`, `reading`, `thinking`, `talking`, `waiting`) that was running before the request, otherwise to `none`. The body is played as it arrives, so clips of any length need no storage on the robot. The response comes when the clip ends.
 
 | Part | Value |
 | --- | --- |
-| Path | `/play` runs `talking`; `/play/{name}` runs `talking`, `typing`, `reading`, `thinking`, or `none`. Animations with their own sound are rejected so two clips never overlap |
+| Path | `/play` runs `talking`; `/play/{name}` runs `talking`, `typing`, `reading`, `thinking`, `waiting`, or `none`. Animations with their own sound are rejected so two clips never overlap |
 | Body | WAV, 16-bit mono PCM at 22050 Hz (the firmware `SAMPLE_RATE`). `Content-Length` is required. Chunks other than `fmt ` and `data` are skipped |
 | `Authorization` | `Bearer <token>` when `access_token` is set |
 
@@ -725,7 +851,7 @@ Errors arrive before any audio plays:
 
 | Status | `error` | When |
 | --- | --- | --- |
-| `400` | `name must be talking, typing, reading, thinking or none` | `{name}` is unknown or has its own sound |
+| `400` | `name must be talking, typing, reading, thinking, waiting or none` | `{name}` is unknown or has its own sound |
 | `415` | `expected 16-bit mono PCM at 22050 Hz` | WAV format or sample rate differs |
 | `415` | `not a WAV file`, `no audio data` | Body is not a RIFF/WAVE file, or has no `data` chunk |
 
@@ -759,7 +885,7 @@ Onboard WS2812 on **GPIO10** (`RGB_LED_PIN`). Byte order is the saved `rgb_order
 
 | Animation | LED color |
 | --- | --- |
-| `typing`, `reading`, `thinking`, `talking`, `welcome`, `ring`, `wakeup` | White (full intensity) |
+| `typing`, `reading`, `thinking`, `talking`, `waiting`, `welcome`, `ring`, `wakeup` | White (full intensity) |
 | `attention`, `error`, `dead` | Red pulse: 500 ms 10%→100%, 500 ms hold 100%, 500 ms 100%→10%, repeat |
 | `abort` | Red (full intensity, solid) |
 | `none`, `sleep` | Off |

@@ -402,6 +402,25 @@ nav a.active {
   font-size: 0.9rem;
 }
 
+/* Master enable for extension cards — split from option toggles below. */
+.toggle-row-enable {
+  padding-bottom: 0.85rem;
+  margin-bottom: 0.15rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.toggle-row-enable label {
+  font-size: 0.95rem;
+}
+
+.ext-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-top: 0.85rem;
+  padding-top: 0.15rem;
+}
+
 .choice-row {
   display: flex;
   flex-wrap: wrap;
@@ -752,6 +771,21 @@ code {
   }
 }
 
+.face-me-section {
+  margin-top: 1.5rem;
+}
+
+.calib-nudge.face-nudge {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.face-pose-joints {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
 .servo-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1025,6 +1059,17 @@ footer {
   margin: 0;
   font-weight: 600;
   font-size: 0.9rem;
+}
+
+/* After base rules so specificity order stays ascending (stylelint). */
+.ext-details > .toggle-row,
+.ext-details > .field-head,
+.ext-details > .choice-row,
+.ext-details > .hint,
+.ext-details > label,
+.ext-details > input,
+.ext-details > .ext-events {
+  margin-top: 0;
 }
 
 .btn-danger {
