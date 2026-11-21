@@ -188,8 +188,11 @@ class Design:
             if oid in placed or oid not in self.instance_component:
                 continue
             matrices = rigid_matrices(self.raw(oid))
-            if len(matrices) > 1:
-                continue
+            # Some saves keep two transforms on the instance (the modelled one,
+            # then the solved one) instead of writing a record, e.g. a mirrored
+            # part placed by joints. The last is the solved placement; extract
+            # still checks it against the part's exported STL.
+            matrices = matrices[-1:]
             if not matrices and not self._places_bodies(oid):
                 continue
             # No transform at all: the component sits where it was modelled.
