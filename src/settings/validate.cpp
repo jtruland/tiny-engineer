@@ -1,5 +1,6 @@
 #include "settings/settings.h"
 
+#include <cmath>
 #include <cstring>
 
 #include "display/eyes/styles/eye_style.h"
@@ -143,6 +144,45 @@ bool settingsValidatePushButtonSound(const char* sound) {
          strcmp(sound, "click") == 0;
 }
 
+bool settingsValidateLcd1602Boot(const char* boot) {
+  if (boot == nullptr) {
+    return false;
+  }
+
+  return strcmp(boot, "none") == 0 ||
+         strcmp(boot, "last") == 0 ||
+         strcmp(boot, "config") == 0;
+}
+
+bool settingsValidateLcd1602Line(const char* line, size_t len) {
+  if (line == nullptr) {
+    return false;
+  }
+
+  if (len > SETTINGS_LCD1602_LINE_MAX_LEN) {
+    return false;
+  }
+
+  // Reject C0 controls (including embedded NUL) so serial settings.get JSON
+  // escaping stays in the 1024-byte sendJsonRes buffer (U+0001 → six escape
+  // bytes each) and JSON \u0000 cannot truncate past strlen.
+  for (size_t i = 0; i < len; i++) {
+    if (static_cast<unsigned char>(line[i]) < 0x20) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool settingsValidateLcd1602Line(const char* line) {
+  if (line == nullptr) {
+    return false;
+  }
+
+  return settingsValidateLcd1602Line(line, strlen(line));
+}
+
 bool settingsValidateRgbOrder(const char* rgbOrder) {
   if (rgbOrder == nullptr) {
     return false;
@@ -173,6 +213,18 @@ const char* SettingsPatch::invalidField() const {
     return "push_button_pin";
   }
 
+  if (lcd1602Boot != nullptr && !settingsValidateLcd1602Boot(lcd1602Boot)) {
+    return "lcd1602_boot";
+  }
+
+  if (lcd1602Line1 != nullptr && !settingsValidateLcd1602Line(lcd1602Line1)) {
+    return "lcd1602_line1";
+  }
+
+  if (lcd1602Line2 != nullptr && !settingsValidateLcd1602Line(lcd1602Line2)) {
+    return "lcd1602_line2";
+  }
+
   if (continuousTimeoutMin && !settingsValidateContinuousTimeout(*continuousTimeoutMin)) {
     return "continuous_timeout";
   }
@@ -200,6 +252,10 @@ const char* SettingsPatch::invalidField() const {
 
   if (rgbOrder != nullptr && !settingsValidateRgbOrder(rgbOrder)) {
     return "rgb_order";
+  }
+
+  if (facePose && !facePose->valid()) {
+    return "face_pose";
   }
 
   return nullptr;
@@ -240,4 +296,18 @@ const char* SettingsPatch::setupOnlyStep() const {
   }
 
   return nullptr;
+}
+
+bool FacePose::valid() const {
+  if (!set) {
+    return true;
+  }
+
+  for (const float value : values) {
+    if (!std::isfinite(value) || value < -1.0f || value > 1.0f) {
+      return false;
+    }
+  }
+
+  return true;
 }

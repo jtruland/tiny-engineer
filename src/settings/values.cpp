@@ -44,6 +44,12 @@ SettingsValues SettingsValues::defaults() {
     SETTINGS_DEFAULT_PUSH_BUTTON_SOUND,
     sizeof(values.pushButtonSoundLongClick)
   );
+  values.lcd1602 = SETTINGS_DEFAULT_LCD1602;
+  values.lcd1602BacklightSleep = SETTINGS_DEFAULT_LCD1602_BACKLIGHT_SLEEP;
+  values.lcd1602WelcomeHello = SETTINGS_DEFAULT_LCD1602_WELCOME_HELLO;
+  strlcpy(values.lcd1602Boot, SETTINGS_DEFAULT_LCD1602_BOOT, sizeof(values.lcd1602Boot));
+  values.lcd1602Line1[0] = '\0';
+  values.lcd1602Line2[0] = '\0';
   values.continuousTimeoutMin = SETTINGS_DEFAULT_CONTINUOUS_TIMEOUT_MIN;
   strlcpy(values.loading, SETTINGS_DEFAULT_LOADING, sizeof(values.loading));
   strlcpy(values.eyesStyle, SETTINGS_DEFAULT_EYES_STYLE, sizeof(values.eyesStyle));
@@ -57,6 +63,7 @@ SettingsValues SettingsValues::defaults() {
 
   strlcpy(values.rgbOrder, SETTINGS_DEFAULT_RGB_ORDER, sizeof(values.rgbOrder));
   values.oledRotate180 = SETTINGS_DEFAULT_OLED_ROTATE_180;
+  values.facePose = FacePose{};
   return values;
 }
 
@@ -67,9 +74,13 @@ void SettingsValues::apply(const SettingsPatch& patch) {
   serialLog = patch.serialLog.value_or(serialLog);
   pushButton = patch.pushButton.value_or(pushButton);
   pushButtonPin = patch.pushButtonPin.value_or(pushButtonPin);
+  lcd1602 = patch.lcd1602.value_or(lcd1602);
+  lcd1602BacklightSleep = patch.lcd1602BacklightSleep.value_or(lcd1602BacklightSleep);
+  lcd1602WelcomeHello = patch.lcd1602WelcomeHello.value_or(lcd1602WelcomeHello);
   continuousTimeoutMin = patch.continuousTimeoutMin.value_or(continuousTimeoutMin);
   servoRanges = patch.servoRanges.value_or(servoRanges);
   oledRotate180 = patch.oledRotate180.value_or(oledRotate180);
+  facePose = patch.facePose.value_or(facePose);
 
   if (patch.hostname != nullptr) {
     strlcpy(hostname, patch.hostname, sizeof(hostname));
@@ -94,6 +105,18 @@ void SettingsValues::apply(const SettingsPatch& patch) {
   if (patch.rgbOrder != nullptr) {
     strlcpy(rgbOrder, patch.rgbOrder, sizeof(rgbOrder));
   }
+
+  if (patch.lcd1602Boot != nullptr) {
+    strlcpy(lcd1602Boot, patch.lcd1602Boot, sizeof(lcd1602Boot));
+  }
+
+  if (patch.lcd1602Line1 != nullptr) {
+    strlcpy(lcd1602Line1, patch.lcd1602Line1, sizeof(lcd1602Line1));
+  }
+
+  if (patch.lcd1602Line2 != nullptr) {
+    strlcpy(lcd1602Line2, patch.lcd1602Line2, sizeof(lcd1602Line2));
+  }
 }
 
 void SettingsValues::log(const char* prefix) const {
@@ -102,15 +125,28 @@ void SettingsValues::log(const char* prefix) const {
   }
 
   const ServoRanges& r = servoRanges;
-  char line[512];
+  char face[48] = "unset";
+
+  if (facePose.set) {
+    snprintf(
+      face,
+      sizeof(face),
+      "%.2f,%.2f,%.2f",
+      facePose.values[0],
+      facePose.values[1],
+      facePose.values[2]
+    );
+  }
+
+  char line[560];
   snprintf(
     line,
     sizeof(line),
     "%s sleep_timeout=%umin hostname=%s volume=%u welcome=%s serial_log=on "
-    "push_button=%s push_button_pin=%u actions=%u "
+    "push_button=%s push_button_pin=%u lcd1602=%s lcd1602_boot=%s actions=%u "
     "continuous_timeout=%umin loading=%s eyes_style=%s "
     "access_token=%s link_mode=%s wifi_networks=%u servos=%u-%u;%u-%u;%u-%u;%u-%u;%u-%u "
-    "rgb_order=%s oled_rotate_180=%s",
+    "rgb_order=%s oled_rotate_180=%s face_pose=%s",
     prefix,
     static_cast<unsigned>(sleepTimeoutMin),
     hostname,
@@ -118,6 +154,8 @@ void SettingsValues::log(const char* prefix) const {
     welcome ? "on" : "off",
     pushButton ? "on" : "off",
     static_cast<unsigned>(pushButtonPin),
+    lcd1602 ? "on" : "off",
+    lcd1602Boot,
     static_cast<unsigned>(g_actions.count()),
     static_cast<unsigned>(continuousTimeoutMin),
     loading,
@@ -128,7 +166,8 @@ void SettingsValues::log(const char* prefix) const {
     r.mins[0], r.maxs[0], r.mins[1], r.maxs[1], r.mins[2], r.maxs[2], r.mins[3], r.maxs[3],
     r.mins[4], r.maxs[4],
     rgbOrder,
-    oledRotate180 ? "on" : "off"
+    oledRotate180 ? "on" : "off",
+    face
   );
   serialLogPrintln(line);
 }

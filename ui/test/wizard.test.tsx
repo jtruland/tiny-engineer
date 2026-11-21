@@ -33,6 +33,32 @@ async function startGuided(settings = {}) {
   return ctx;
 }
 
+/** Confirm through all ten range substeps into Face me (stock or custom mins work as parks). */
+async function reachFace(settings = {}) {
+  const ctx = await startGuided(settings);
+  const labels = [
+    "Confirm center",
+    "Confirm min",
+    "Confirm center",
+    "Confirm min",
+    "Confirm center",
+    "Confirm min",
+    "Confirm min",
+    "Confirm max",
+    "Confirm min",
+    "Confirm max",
+  ];
+
+  for (const label of labels) {
+    await screen.findByRole("button", { name: label });
+    await ctx.click(label);
+  }
+
+  await screen.findByRole("heading", { name: "Face me" });
+
+  return ctx;
+}
+
 describe("setup wizard", () => {
   it("takes over the config page while the robot is provisioning", async () => {
     fakeRobot({ provisioning: true });
@@ -73,6 +99,12 @@ describe("setup wizard", () => {
       servo_mins: [80, 80, 80, 80, 80],
       servo_maxs: [100, 100, 100, 100, 100],
     });
+    expect(screen.queryByRole("heading", { name: "Face me" })).toBeNull();
+    expect(
+      robot
+        .sent("POST", "/settings")
+        .some((request) => JSON.stringify(request.json).includes("face_pose")),
+    ).toBe(false);
     await waitFor(() => expect(robot.lastPost("/setup/oled")?.json).toEqual({ rotate_180: false }));
 
     const rotate = screen.getByRole("button", { name: "Rotate 180°" });
@@ -164,7 +196,7 @@ describe("setup wizard", () => {
   it("nudges center and min with the same buttons, mirrors max about the session center", async () => {
     const { robot, click } = await startGuided();
 
-    expect(screen.getByTestId("calib-progress").textContent).toBe("Servo calibration · 1 of 10");
+    expect(screen.getByTestId("calib-progress").textContent).toBe("Servo calibration · 1 of 11");
     expect(
       screen
         .getByRole("progressbar", { name: "Servo calibration progress" })
@@ -338,7 +370,7 @@ describe("setup wizard", () => {
     expect(screen.queryByRole("button", { name: "Neck" })).toBeNull();
   });
 
-  it("sets hand bounds in docs polarity order and saves mins/maxs only on finish", async () => {
+  it("sets hand bounds in docs polarity order and opens Face me after the last range", async () => {
     const { robot, click } = await startGuided();
 
     // Body/Neck/Head mid 90; min opens at saved 80 → nudge to 60 → max 120
@@ -400,11 +432,13 @@ describe("setup wizard", () => {
     await click("+10°");
     await click("+5°");
 
-    expect(screen.getByRole("button", { name: "Save and continue" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Confirm max" })).toBeTruthy();
 
-    await click("Save and continue");
+    await click("Confirm max");
 
-    await waitFor(() => expect(stepLabel()).toBe("Step 2 of 5 · Screen"));
+    await screen.findByRole("heading", { name: "Face me" });
+    expect(stepLabel()).toBe("Step 1 of 5 · Servos");
+    expect(screen.getByTestId("calib-progress").textContent).toBe("Servo calibration · 11 of 11");
 
     const saved = robot.lastPost("/settings")?.json as Record<string, unknown>;
 
@@ -414,6 +448,121 @@ describe("setup wizard", () => {
     });
     expect(saved).not.toHaveProperty("servo_centers");
     expect(Object.keys(saved)).toEqual(["servo_mins", "servo_maxs"]);
+  });
+
+  it("skips Face me when calibration is skipped from the hub", async () => {
+    const { robot } = await skipCalibration({ face_pose: [0.2, -0.5, 0.25] });
+
+    expect(screen.queryByRole("heading", { name: "Face me" })).toBeNull();
+    expect(stepLabel()).toBe("Step 2 of 5 · Screen");
+    expect(
+      robot
+        .sent("POST", "/settings")
+        .some((request) => JSON.stringify(request.json).includes("face_pose")),
+    ).toBe(false);
+  });
+
+  it("moves the face joints to the shown pose when the Face me step opens", async () => {
+    const { robot } = await reachFace({
+      servo_mins: [70, 40, 45, 35, 60],
+      servo_maxs: [110, 130, 135, 125, 120],
+    });
+
+    // Default pose: head 1/7 of 20° above mid 90 = 93, neck mid 85, body mid 90.
+    await waitFor(() =>
+      expect(
+        robot
+          .sent("POST", "/setup/servo")
+          .map((request) => request.json)
+          .slice(-3),
+      ).toEqual([
+        { index: 0, angle: 93 },
+        { index: 1, angle: 85 },
+        { index: 4, angle: 90 },
+      ]),
+    );
+  });
+
+  it("moves the joints again and saves the pose without a nudge", async () => {
+    const { robot, click } = await reachFace({
+      servo_mins: [70, 40, 45, 35, 60],
+      servo_maxs: [110, 130, 135, 125, 120],
+    });
+
+    await waitFor(() =>
+      expect(
+        robot
+          .sent("POST", "/setup/servo")
+          .map((request) => request.json)
+          .slice(-3),
+      ).toEqual([
+        { index: 0, angle: 93 },
+        { index: 1, angle: 85 },
+        { index: 4, angle: 90 },
+      ]),
+    );
+
+    const movesAtFace = robot.sent("POST", "/setup/servo").length;
+
+    await click("Save and continue");
+
+    await waitFor(() => expect(stepLabel()).toBe("Step 2 of 5 · Screen"));
+    expect(robot.sent("POST", "/setup/servo")).toHaveLength(movesAtFace + 3);
+    expect(robot.lastPost("/settings")?.json).toEqual({ face_pose: [1 / 7, 0, 0] });
+  });
+
+  it("does not save the face pose when a move fails", async () => {
+    const { robot, click } = await reachFace();
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Face me" })).toBeTruthy());
+
+    const movesAtFace = robot.sent("POST", "/setup/servo").length;
+
+    robot.failing.add("/setup/servo");
+    await click("Save and continue");
+
+    await waitFor(() =>
+      expect(robot.sent("POST", "/setup/servo").length).toBeGreaterThan(movesAtFace),
+    );
+    expect(screen.getByRole("heading", { name: "Face me" })).toBeTruthy();
+    expect(stepLabel()).toBe("Step 1 of 5 · Servos");
+    expect(
+      robot
+        .sent("POST", "/settings")
+        .some((request) => JSON.stringify(request.json).includes("face_pose")),
+    ).toBe(false);
+  });
+
+  it("moves face joints with the setup move and saves the pose", async () => {
+    const { robot, click } = await reachFace({
+      servo_mins: [70, 40, 45, 35, 60],
+      servo_maxs: [110, 130, 135, 125, 120],
+    });
+
+    await click(/^Neck/);
+    await click("−5°");
+    await click("−5°");
+
+    // Neck (index 1): mid 85 − 10 = 75, which is -0.2222 of the 45° half-span.
+    await waitFor(() =>
+      expect(robot.lastPost("/setup/servo")?.json).toEqual({ index: 1, angle: 75 }),
+    );
+    expect(robot.sent("POST", "/test/servo")).toHaveLength(0);
+
+    await click("Save and continue");
+
+    await waitFor(() => expect(stepLabel()).toBe("Step 2 of 5 · Screen"));
+    expect(robot.lastPost("/settings")?.json).toEqual({ face_pose: [1 / 7, -0.2222, 0] });
+  });
+
+  it("returns from Face me to the last range step on Back", async () => {
+    const { click } = await reachFace();
+
+    await screen.findByRole("heading", { name: "Face me" });
+    await click("Back");
+
+    await screen.findByRole("heading", { name: "Right hand · upper" });
+    expect(screen.getByTestId("calib-progress").textContent).toBe("Servo calibration · 10 of 11");
   });
 
   it("restores the setup screen when leaving the screen step", async () => {

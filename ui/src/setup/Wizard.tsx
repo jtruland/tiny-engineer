@@ -4,7 +4,8 @@ import { useRobot } from "../robot";
 import { Button } from "../components/Button";
 import { useStatus } from "../status/status";
 import { useResettableState } from "../useResettableState";
-import type { Range } from "../servos";
+import { moveFacePose, savedFacePose, type Range } from "../servos";
+import { FaceStep } from "./FaceStep";
 import { GuidedCalibration } from "./GuidedCalibration";
 import { LedStep } from "./LedStep";
 import { NetworkStep } from "./NetworkStep";
@@ -14,6 +15,7 @@ import { ServosHub } from "./ServosHub";
 import { SpeakerStep } from "./SpeakerStep";
 import { useCalibration } from "./useCalibration";
 import { releaseLed, useLedMapping } from "./useLedMapping";
+import { useSetupServo } from "./useSetupServo";
 
 const STEPS = [
   { id: "servos", title: "Servos" },
@@ -31,6 +33,8 @@ export function Wizard({ settings }: { settings: Settings }) {
   const [stepIndex, setStepIndex] = useState(0);
   const [oledRotate180, setOledRotate180] = useResettableState(settings.oled_rotate_180, Boolean);
   const calibration = useCalibration(settings);
+  const [facePose, setFacePose] = useState(() => savedFacePose(settings));
+  const moveServo = useSetupServo();
   const led = useLedMapping(settings.rgb_order);
   const step = STEPS[stepIndex];
   const nextStep = STEPS.at(stepIndex + 1);
@@ -71,6 +75,29 @@ export function Wizard({ settings }: { settings: Settings }) {
     }
   }
 
+  /** Last range confirm: persist ranges, then open Face me inside calibration. */
+  async function enterFace(ranges?: Range[]) {
+    if (await saveServoRanges(ranges)) {
+      calibration.startFace();
+    }
+  }
+
+  async function saveFaceAndContinue() {
+    // The robot moves to the pose first, so it never stores an angle it did not reach.
+    if (
+      !(await moveFacePose(facePose, calibration.ranges, (index, angle) =>
+        moveServo({ index, angle }),
+      ))
+    ) {
+      return;
+    }
+
+    if (await save({ face_pose: facePose }, "Saving face pose…")) {
+      calibration.goHub();
+      setStepIndex(stepIndex + 1);
+    }
+  }
+
   // What each non-servos step saves before the wizard moves on.
   const saves: Partial<Record<StepId, () => Promise<boolean>>> = {
     oled: () => save({ oled_rotate_180: oledRotate180 }, "Saving screen rotation…"),
@@ -86,10 +113,6 @@ export function Wizard({ settings }: { settings: Settings }) {
   }
 
   function back() {
-    if (step.id === "oled") {
-      calibration.goHub();
-    }
-
     setStepIndex(stepIndex - 1);
   }
 
@@ -110,7 +133,16 @@ export function Wizard({ settings }: { settings: Settings }) {
       {onServos && calibration.mode === "guided" && (
         <GuidedCalibration
           calibration={calibration}
-          onComplete={(ranges) => void finishServos(ranges)}
+          onRangesComplete={(ranges) => void enterFace(ranges)}
+        />
+      )}
+      {onServos && calibration.mode === "face" && (
+        <FaceStep
+          pose={facePose}
+          ranges={calibration.ranges}
+          calibration={calibration}
+          onPose={setFacePose}
+          onSave={() => void saveFaceAndContinue()}
         />
       )}
       {step.id === "oled" && (

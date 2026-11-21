@@ -16,6 +16,13 @@ constexpr bool SETTINGS_DEFAULT_PUSH_BUTTON = false;
 constexpr uint8_t SETTINGS_DEFAULT_PUSH_BUTTON_PIN = 20;
 constexpr const char* SETTINGS_DEFAULT_PUSH_BUTTON_SOUND = "none";
 constexpr size_t SETTINGS_PUSH_BUTTON_SOUND_MAX_LEN = 8;
+constexpr bool SETTINGS_DEFAULT_LCD1602 = false;
+constexpr bool SETTINGS_DEFAULT_LCD1602_BACKLIGHT_SLEEP = true;
+constexpr bool SETTINGS_DEFAULT_LCD1602_WELCOME_HELLO = false;
+constexpr const char* SETTINGS_DEFAULT_LCD1602_BOOT = "none";
+constexpr size_t SETTINGS_LCD1602_BOOT_MAX_LEN = 8;
+constexpr size_t SETTINGS_LCD1602_LINE_MAX_LEN = 64;
+constexpr uint8_t SETTINGS_DEFAULT_LCD1602_BRIGHTNESS = 50;
 constexpr uint32_t SETTINGS_DEFAULT_CONTINUOUS_TIMEOUT_MIN = 5;
 constexpr const char* SETTINGS_DEFAULT_LOADING = "progress";
 constexpr const char* SETTINGS_DEFAULT_EYES_STYLE = "classic";
@@ -41,12 +48,23 @@ constexpr uint8_t SETTINGS_SERVO_ANGLE_MAX = 180;
 constexpr size_t SETTINGS_RGB_ORDER_MAX_LEN = 3;
 constexpr const char* SETTINGS_DEFAULT_RGB_ORDER = "GRB";
 constexpr bool SETTINGS_DEFAULT_OLED_ROTATE_180 = false;
+constexpr size_t SETTINGS_FACE_POSE_COUNT = 3;
 
 struct ServoRanges {
   uint8_t mins[SETTINGS_SERVO_COUNT];
   uint8_t maxs[SETTINGS_SERVO_COUNT];
 
   // Every angle within 0..SETTINGS_SERVO_ANGLE_MAX and each min below its max.
+  bool valid() const;
+};
+
+// Optional "face me" pose in animation units (-1 = saved min, 0 = mid, 1 = max),
+// in the order head, neck, body. `set` false means the user did not set one.
+struct FacePose {
+  bool set;
+  float values[SETTINGS_FACE_POSE_COUNT];
+
+  // Not set, or every value finite and within -1..1.
   bool valid() const;
 };
 
@@ -59,6 +77,12 @@ struct SettingsPatch {
   std::optional<bool> serialLog;
   std::optional<bool> pushButton;
   std::optional<uint8_t> pushButtonPin;
+  std::optional<bool> lcd1602;
+  std::optional<bool> lcd1602BacklightSleep;
+  std::optional<bool> lcd1602WelcomeHello;
+  const char* lcd1602Boot = nullptr;
+  const char* lcd1602Line1 = nullptr;
+  const char* lcd1602Line2 = nullptr;
   std::optional<uint32_t> continuousTimeoutMin;
   const char* loading = nullptr;
   const char* eyesStyle = nullptr;
@@ -67,6 +91,8 @@ struct SettingsPatch {
   std::optional<ServoRanges> servoRanges;
   const char* rgbOrder = nullptr;
   std::optional<bool> oledRotate180;
+  // A FacePose with `set` false clears the saved pose.
+  std::optional<FacePose> facePose;
 
   // API name of the first field set to an invalid value, or nullptr.
   const char* invalidField() const;
@@ -86,6 +112,12 @@ bool settingsWelcomeEnabled();
 bool settingsSerialLogEnabled();
 bool settingsPushButton();
 uint8_t settingsPushButtonPin();
+bool settingsLcd1602();
+bool settingsLcd1602BacklightSleep();
+bool settingsLcd1602WelcomeHello();
+const char* settingsLcd1602Boot();
+const char* settingsLcd1602Line1();
+const char* settingsLcd1602Line2();
 uint32_t settingsContinuousTimeoutMin();
 const char* settingsLoading();
 const char* settingsEyesStyle();
@@ -110,6 +142,7 @@ float settingsServoMin(int index);
 float settingsServoMax(int index);
 const char* settingsRgbOrder();
 bool settingsOledRotate180();
+const FacePose& settingsFacePose();
 
 // True once the saved hostname, loading screen or WiFi networks differ from
 // what this boot started with; those apply only after a reboot.
@@ -127,6 +160,10 @@ bool settingsValidateWifiPassword(const char* wifiPassword);
 bool settingsValidateRgbOrder(const char* rgbOrder);
 bool settingsValidatePushButtonPin(uint8_t pin);
 bool settingsValidatePushButtonSound(const char* sound);
+bool settingsValidateLcd1602Boot(const char* boot);
+bool settingsValidateLcd1602Line(const char* line, size_t len);
+// C-string convenience; equivalent to settingsValidateLcd1602Line(line, strlen(line)).
+bool settingsValidateLcd1602Line(const char* line);
 
 // True when applying the patch would leave two enabled extensions on the same GPIO.
 // Writes a plain conflict message when message/messageLen are set. Does not write NVS.
@@ -147,5 +184,6 @@ bool saveWifiNetworks(const WifiNetworkList& networks);
 bool saveActions(const ActionList& actions);
 
 // Clears the NVS namespace and restores the defaults, WiFi networks included,
-// but keeps the servo min/max, RGB LED byte order and OLED 180° rotation.
+// but keeps the servo min/max, face pose, RGB LED byte order and OLED 180°
+// rotation.
 bool factoryResetSettings();
